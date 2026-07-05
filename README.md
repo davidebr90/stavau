@@ -157,7 +157,7 @@ src/stavau/
 - **Stability:** moving-average smoothing + Schmitt-trigger-style hysteresis (separate "leave" and "return" thresholds) + minimum dwell time.
 - **GUI:** PySide6 (Qt) — chosen over Tauri to keep a single-language stack and first-class tray support; revisit at v0.3 if footprint becomes an issue.
 
-Full details: [docs/architecture.md](docs/architecture.md) · [docs/rssi-calibration.md](docs/rssi-calibration.md) · [docs/threat-model.md](docs/threat-model.md)
+Full details: [docs/architecture.md](docs/architecture.md) · [docs/rssi-calibration.md](docs/rssi-calibration.md) · [docs/device-compatibility.md](docs/device-compatibility.md) · [docs/os-native-apis.md](docs/os-native-apis.md) · [docs/threat-model.md](docs/threat-model.md) · [docs/agent-team-plan.md](docs/agent-team-plan.md) (roadmap for contributors)
 
 ## Proximity strategies (works with every device)
 
