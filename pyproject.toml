@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stavau"
+version = "0.1.0.dev0"
+description = "Privacy by proximity: auto-lock your workstation when you walk away, via BLE proximity of your phone or watch."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Davide", email = "davidebr90@gmail.com" }]
+keywords = ["privacy", "bluetooth", "ble", "proximity", "screen-lock", "security"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: Microsoft :: Windows :: Windows 10",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
+]
+dependencies = [
+  "bleak>=3.0",
+  "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov",
+  "pytest-asyncio",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "pre-commit",
+]
+
+[project.scripts]
+stavau = "stavau.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/davidebr90/stavau"
+Issues = "https://github.com/davidebr90/stavau/issues"
+Changelog = "https://github.com/davidebr90/stavau/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stavau"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
