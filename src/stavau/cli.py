@@ -46,6 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="attempt BLE bonding (pairing) for a stable identity; otherwise "
         "associate pairing-less via advertisement scanning",
     )
+    p_setup.add_argument(
+        "--strategy",
+        choices=["auto", "adv_scan", "classic_link"],
+        default="auto",
+        help="proximity strategy: 'auto' detects it from the device (default); "
+        "force 'classic_link' for an idle Android that does not advertise",
+    )
     p_setup.set_defaults(func=cmd_setup)
 
     p_pair = sub.add_parser("pair", help="bond the configured device (or --address) via BLE")
@@ -138,7 +145,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if args.radius is not None:
         settings.radius_m = args.radius
 
-    _identify_and_associate(settings, pair=args.pair)
+    _identify_and_associate(settings, pair=args.pair, forced_strategy=args.strategy)
 
     if args.skip_calibration:
         print(
@@ -165,12 +172,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _identify_and_associate(settings: Settings, *, pair: bool) -> None:
+def _identify_and_associate(settings: Settings, *, pair: bool, forced_strategy: str) -> None:
     """Probe the device, classify it, pick a strategy, and associate it.
 
     Association is pairing-less by default (advertisement scanning). With
     ``pair=True`` we attempt BLE bonding for a stable identity; on failure we
     fall back to pairing-less and tell the user to bond via the OS dialog.
+    ``forced_strategy`` other than "auto" overrides the detected strategy — the
+    escape hatch for an idle Android that will not advertise during the probe.
     """
     from stavau.core.deviceid import classify
     from stavau.core.monitor import probe_device
@@ -179,16 +188,21 @@ def _identify_and_associate(settings: Settings, *, pair: bool) -> None:
     observation = asyncio.run(probe_device(settings.device_address, 5.0))
     classification = classify(observation)
     settings.device_kind = classification.kind.value
-    settings.strategy = classification.effective.value
 
     print(f"  Detected: {classification.rationale}")
-    if not classification.recommended_is_implemented:
-        print(
-            f"  Recommended strategy '{classification.recommended.value}' is not yet "
-            f"implemented; using '{classification.effective.value}'."
-        )
     for warning in classification.warnings:
         print(f"  ! {warning}")
+
+    if forced_strategy != "auto":
+        settings.strategy = forced_strategy
+        print(f"  Strategy forced to '{forced_strategy}' (overriding auto-detection).")
+    else:
+        settings.strategy = classification.effective.value
+        if not classification.recommended_is_implemented:
+            print(
+                f"  Recommended strategy '{classification.recommended.value}' is not yet "
+                f"implemented; using '{classification.effective.value}'."
+            )
 
     if pair:
         settings.association = "paired" if _try_pair(settings.device_address) else "pairing-less"

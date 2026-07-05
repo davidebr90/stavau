@@ -39,23 +39,39 @@ For **Android**, a companion app (foreground service advertising or connecting t
 
 ## 5a. Implementation status (v0.2)
 
-**Landed:** device intelligence (`core/deviceid.py`) classifies the trusted
-device from advertised Bluetooth SIG company IDs (Apple `0x004C`, Samsung
-`0x0075`, Google `0x00E0`, Microsoft `0x0006`, Garmin/Fitbit) and recommends a
-strategy. `stavau setup` probes the device for 5 s, records `device_kind` /
-`strategy` / `association` in config, and `stavau status` reports them.
-Association is pairing-less by default (advertisement scanning); `stavau setup
---pair` / `stavau pair` attempt BLE bonding (best-effort via bleak) and fall
-back to pairing-less with guidance.
+**Device intelligence** (`core/deviceid.py`) classifies the trusted device from
+advertised Bluetooth SIG company IDs (Apple `0x004C`, Samsung `0x0075`, Google
+`0x00E0`, Microsoft `0x0006`, Garmin/Fitbit) and recommends a strategy. `stavau
+setup` probes for 5 s, records `device_kind` / `strategy` / `association`, and
+`stavau status` reports them. Association is pairing-less by default; `stavau
+setup --pair` / `stavau pair` attempt BLE bonding (best-effort via bleak).
 
-**Verified live:** a Samsung device is correctly classified as Android-kind, the
-engine recommends `classic_link`, honestly reports it is not yet implemented,
-and falls back to `adv_scan` with a warning.
+**Strategy engine** (`core/strategy.py`) builds the concrete `ProximitySource`
+for the chosen strategy, with safe fallback:
 
-**Not yet implemented:** the `GATT_LINK` and `CLASSIC_LINK` runtime strategies
-(only `ADV_SCAN` runs today) and per-strategy RSSI acquisition. The
-classification already routes toward them and records the recommendation so the
-switch is a localized change.
+| Strategy | Backend | Status | Signal |
+|---|---|---|---|
+| `ADV_SCAN` | BLE advertisement scanning (bleak) | ✅ implemented | real RSSI → distance |
+| `CLASSIC_LINK` (Linux) | `l2ping` + `hcitool rssi` (`HcitoolClassicBackend`) | ✅ implemented | real connection RSSI, mapped to dBm |
+| `CLASSIC_LINK` (Windows) | WinRT `BluetoothDevice.ConnectionStatus` (`WinRtConnectionBackend`) | ✅ implemented | reachability only (in-range / out-of-range) |
+| `CLASSIC_LINK` (macOS) | — | ⏳ planned | — |
+| `GATT_LINK` | held GATT connection | ⏳ planned | — |
+
+If a strategy's backend is unavailable, the engine falls back to `ADV_SCAN` and
+logs why. Idle Android phones do not advertise during the setup probe (so they
+classify as *unknown*); the user forces the right channel with `stavau setup
+--strategy classic_link`.
+
+**Verified live (Windows 11):** Samsung classified as Android-kind; `classic_link`
+selected end to end (`monitor_started strategy=classic_link`), running through
+the `windows-winrt` backend; WinRT `ConnectionStatus` reads real device state; a
+disconnected device correctly reports "no signal" → fail-safe. Linux
+`hcitool`/`l2ping` parsing and mapping are covered by unit tests (subprocess
+mocked).
+
+**Not yet implemented:** the `GATT_LINK` runtime strategy, Windows connected-RSSI
+(no public API — reachability only, matching Windows Dynamic Lock's own
+limitation), and the macOS classic backend.
 
 ## 5b. Resulting design: the strategy engine (v0.2)
 

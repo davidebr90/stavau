@@ -28,10 +28,10 @@ class TestClassification:
         c = classify(obs(SAMSUNG_COMPANY_ID))
         assert c.kind is DeviceKind.ANDROID
         assert c.recommended is Strategy.CLASSIC_LINK
-        # Classic link is not implemented yet: effective strategy falls back.
-        assert not c.recommended_is_implemented
-        assert c.effective is Strategy.ADV_SCAN
-        assert c.warnings  # must warn about the fallback
+        # classic_link is now implemented; it is the effective strategy.
+        assert c.recommended_is_implemented
+        assert c.effective is Strategy.CLASSIC_LINK
+        assert c.warnings  # still warns about platform caveats (Windows reachability-only)
 
     def test_google_is_android(self) -> None:
         assert classify(obs(GOOGLE_COMPANY_ID)).kind is DeviceKind.ANDROID
@@ -63,6 +63,8 @@ class TestClassification:
 
 class TestClassificationInvariants:
     def test_effective_strategy_is_always_implemented(self) -> None:
+        from stavau.core.deviceid import IMPLEMENTED_STRATEGIES
+
         for company in [
             APPLE_COMPANY_ID,
             SAMSUNG_COMPANY_ID,
@@ -72,4 +74,4 @@ class TestClassificationInvariants:
             0x1234,
         ]:
             c: Classification = classify(obs(company))
-            assert c.effective in {Strategy.ADV_SCAN}
+            assert c.effective in IMPLEMENTED_STRATEGIES

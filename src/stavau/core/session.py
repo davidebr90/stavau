@@ -16,8 +16,9 @@ from stavau.config.settings import Settings
 from stavau.core.breaker import BreakerConfig, LockCircuitBreaker
 from stavau.core.distance import CalibrationModel
 from stavau.core.events import EventLog
-from stavau.core.monitor import BleProximitySource, NearbyCache, RssiTracker
+from stavau.core.monitor import NearbyCache, RssiTracker
 from stavau.core.presence import PresenceConfig, PresenceMachine, PresenceState
+from stavau.core.strategy import ProximitySource, build_source
 from stavau.platform.base import Locker, LockError
 
 _LOCK_RETRY_SECONDS = 5.0
@@ -50,7 +51,10 @@ class MonitorSession:
         )
         self._machine = self._new_machine()
         self._tracker = RssiTracker(smoothing_window=settings.smoothing_window)
-        self._source = BleProximitySource(settings.device_address, self._tracker, nearby=nearby)
+        built = build_source(settings.strategy, settings.device_address, self._tracker, nearby)
+        self._source = built.source
+        self._effective_strategy = built.effective_strategy
+        self._strategy_note = built.note
         self._breaker = LockCircuitBreaker(
             BreakerConfig(
                 max_locks=settings.breaker_max_locks,
@@ -60,8 +64,12 @@ class MonitorSession:
         )
 
     @property
-    def source(self) -> BleProximitySource:
+    def source(self) -> ProximitySource:
         return self._source
+
+    @property
+    def strategy_note(self) -> str:
+        return self._strategy_note
 
     @property
     def machine(self) -> PresenceMachine:
@@ -93,6 +101,7 @@ class MonitorSession:
             "monitor_started",
             device=self._settings.device_alias,
             dry_run=self._locker is None,
+            strategy=self._effective_strategy,
         )
         await self._source.start()
         started = time.monotonic()

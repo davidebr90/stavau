@@ -159,12 +159,25 @@ src/stavau/
 
 Full details: [docs/architecture.md](docs/architecture.md) · [docs/rssi-calibration.md](docs/rssi-calibration.md) · [docs/threat-model.md](docs/threat-model.md)
 
+## Proximity strategies (works with every device)
+
+Different devices expose presence over different channels, so stavau picks the right one per device (and you can override it):
+
+| Device | Channel | Strategy | Signal |
+|---|---|---|---|
+| iPhone / iPad / Apple Watch | BLE (advertises Continuity constantly) | `adv_scan` | real RSSI → distance |
+| BLE beacons, wearables, low-energy tags | BLE advertisements | `adv_scan` | real RSSI → distance |
+| Android phone (idle, not advertising) | bonded Bluetooth Classic | `classic_link` | real RSSI on Linux; in-range/out on Windows |
+| Any bonded Classic device | Bluetooth Classic link | `classic_link` | see above |
+
+`stavau setup` probes and chooses automatically. For an idle Android that isn't advertising during setup, force the channel: `stavau setup --strategy classic_link`. Details and the per-OS capability matrix: [docs/device-compatibility.md](docs/device-compatibility.md).
+
 ## Roadmap
 
 | Version | Scope | Status |
 |---|---|---|
 | **v0.1 (MVP)** | BLE monitoring + RSSI distance estimate + screen lock, **CLI** (Linux target; Windows lock backend landed early) | ✅ implemented — release pending acceptance tests |
-| **v0.2** | Proximity **strategy engine** — device intelligence + pairing/pairing-less association ✅ landed; GATT-link / classic-BT strategies and macOS lock backend ⏳ (see [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in progress |
+| **v0.2** | Proximity **strategy engine** — device intelligence, pairing/pairing-less association, and **classic-link** (BLE + Bluetooth Classic: real RSSI on Linux, reachability on Windows) ✅ landed; GATT-link strategy and macOS lock backend ⏳ (see [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in progress |
 | **v0.3** | GUI: radius slider, calibration wizard | ⏳ |
 | **v0.4** | System tray ✅ (preview: `stavau tray`), event log viewer, dark mode, i18n (EN/IT) | 🚧 |
 

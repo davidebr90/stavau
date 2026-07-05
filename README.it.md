@@ -113,7 +113,7 @@ Limiti noti (documentati in [docs/threat-model.md](docs/threat-model.md)): attac
 | Versione | Contenuto | Stato |
 |---|---|---|
 | **v0.1 (MVP)** | Monitoraggio BLE + stima distanza RSSI + blocco schermo, **CLI** (target Linux; backend Windows arrivato in anticipo) | ✅ implementata — release dopo i test di accettazione |
-| **v0.2** | **Strategy engine** di prossimità — device intelligence + associazione pairing/senza-pairing ✅ fatto; strategie GATT-link / Bluetooth Classic e backend macOS ⏳ (vedi [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in corso |
+| **v0.2** | **Strategy engine** di prossimità — device intelligence, associazione pairing/senza-pairing e **classic-link** (BLE + Bluetooth Classic: RSSI reale su Linux, reachability su Windows) ✅ fatto; strategia GATT-link e backend macOS ⏳ (vedi [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in corso |
 | **v0.3** | GUI: slider raggio, wizard di calibrazione | ⏳ |
 | **v0.4** | System tray ✅ (preview: `stavau tray`), viewer log eventi, dark mode, i18n (EN/IT) | 🚧 |
 

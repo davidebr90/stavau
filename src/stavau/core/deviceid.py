@@ -35,8 +35,10 @@ class Strategy(Enum):
     CLASSIC_LINK = "classic_link"  # bonded Bluetooth Classic link (planned)
 
 
-# Only this strategy has a working runtime implementation today.
-IMPLEMENTED_STRATEGIES = frozenset({Strategy.ADV_SCAN})
+# Strategies with a working runtime implementation. CLASSIC_LINK runs with real
+# RSSI on Linux (hcitool) and reachability on Windows (WinRT); GATT_LINK is
+# still planned.
+IMPLEMENTED_STRATEGIES = frozenset({Strategy.ADV_SCAN, Strategy.CLASSIC_LINK})
 
 
 @dataclass(frozen=True)
@@ -88,13 +90,13 @@ def classify(obs: Observation) -> Classification:
             recommended=Strategy.CLASSIC_LINK,
             rationale=(
                 "Android device (Samsung/Google): idle Android phones frequently "
-                "stop advertising BLE, so a bonded Bluetooth Classic link is the "
-                "reliable channel."
+                "stop advertising BLE, so the bonded Bluetooth Classic link "
+                "(classic_link strategy) is the reliable channel."
             ),
             warnings=[
-                "Strategy 'classic_link' is planned, not yet implemented: stavau "
-                "will fall back to advertisement scanning, which may lose an idle "
-                "Android. Keep the phone advertising, or bond it and re-test.",
+                "classic_link gives real RSSI on Linux (hcitool). On Windows it is "
+                "reachability-only (in-range / out-of-range) and reflects active "
+                "Classic connections, so keep the phone bonded and connected.",
             ],
         )
 
@@ -131,8 +133,7 @@ def classify(obs: Observation) -> Classification:
         rationale="No advertisements observed during the probe.",
         warnings=[
             "The device was not seen advertising. If it is an idle Android phone "
-            "this is expected — bond it and consider the classic-link strategy "
-            "(planned). If it is powered off or out of range, bring it closer and "
-            "re-run setup.",
+            "this is expected — bond it and set the classic_link strategy. If it is "
+            "powered off or out of range, bring it closer and re-run setup.",
         ],
     )
