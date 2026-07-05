@@ -1,6 +1,6 @@
 """End-to-end MonitorSession tests with a fake proximity source and locker.
 
-Time is driven by monkeypatching the session's sleep and monotonic clock so a
+Time is driven by the shared `virtual_clock` fixture (see conftest.py) so a
 multi-lock guardrail scenario runs instantly and deterministically. RSSI is
 scripted: one sample is fed at the top of each tick.
 """
@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from stavau.config.settings import Settings
-from stavau.core import session as session_mod
 from stavau.core.events import EventLog
 from stavau.core.session import MonitorSession, Tick
+from stavau.platform.lockstate import LockStateObserver
 
 
 class FakeLocker:
@@ -40,21 +40,11 @@ class FakeSource:
         self.stopped = True
 
 
-@pytest.fixture
-def virtual_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    holder = [0.0]
-
-    async def fake_sleep(_seconds: float) -> None:
-        holder[0] += 1.0
-
-    monkeypatch.setattr(session_mod.time, "monotonic", lambda: holder[0])
-    monkeypatch.setattr(session_mod, "_sleep", fake_sleep)
-
-
 def run_session(
     tmp_path: Path,
     rssi_script: list[float | None],
     monkeypatch: pytest.MonkeyPatch,
+    observer: LockStateObserver | None = None,
     **overrides: object,
 ) -> tuple[FakeLocker, list[Tick]]:
     settings = Settings(
@@ -73,7 +63,9 @@ def run_session(
         setattr(settings, key, value)
 
     locker = FakeLocker()
-    session = MonitorSession(settings, locker, EventLog(tmp_path / "events.jsonl"))
+    session = MonitorSession(
+        settings, locker, EventLog(tmp_path / "events.jsonl"), observer=observer
+    )
     session._source = FakeSource()  # type: ignore[assignment]
 
     # Feed one scripted RSSI sample at the start of each tick, right before the

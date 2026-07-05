@@ -4,10 +4,22 @@ Encapsulates the full pipeline — RSSI tracking, distance model, presence state
 machine, lock action, retry-on-failure and the anti-runaway circuit breaker —
 behind one async `run()` with a per-tick callback. Keeping it in one place
 means the fail-safe and guardrail logic cannot drift between front-ends.
+
+Lock-state feedback: an optional `LockStateObserver` reports whether the OS
+session is already locked. The loop polls `observer.current()` once per tick
+instead of using `subscribe()` callbacks — the loop already wakes every
+second, polling keeps every state read on the event-loop thread (no
+cross-thread callback synchronization), and one tick of latency is well below
+the grace period. When the observer says the screen is already locked, the
+redundant lock action is skipped (and NOT registered on the circuit breaker —
+no actual lock happened). An unknown state (None, missing observer, or an
+observer error) NEVER suppresses locking: the loop then behaves exactly as if
+no observer existed (invariant I1).
 """
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,8 +32,16 @@ from stavau.core.monitor import NearbyCache, RssiTracker
 from stavau.core.presence import PresenceConfig, PresenceMachine, PresenceState
 from stavau.core.strategy import ProximitySource, build_source
 from stavau.platform.base import Locker, LockError
+from stavau.platform.lockstate import LockStateObserver, get_lock_state_observer
 
 _LOCK_RETRY_SECONDS = 5.0
+
+
+class _UnsetType:
+    """Sentinel type: distinguishes "argument not passed" from an explicit None."""
+
+
+_UNSET = _UnsetType()
 
 
 @dataclass(frozen=True)
@@ -32,6 +52,7 @@ class Tick:
     state: PresenceState
     breaker_paused: bool
     breaker_seconds_remaining: float
+    screen_locked: bool | None
 
 
 class MonitorSession:
@@ -42,10 +63,14 @@ class MonitorSession:
         log: EventLog,
         *,
         nearby: NearbyCache | None = None,
+        observer: LockStateObserver | None | _UnsetType = _UNSET,
     ) -> None:
         self._settings = settings
         self._locker = locker
         self._log = log
+        # The session owns the observer lifecycle: it is closed when run() ends.
+        self._observer = get_lock_state_observer() if isinstance(observer, _UnsetType) else observer
+        self._observer_error_logged = False
         self._model = CalibrationModel(
             rssi_at_1m=settings.rssi_at_1m, path_loss_exponent=settings.path_loss_exponent
         )
@@ -108,9 +133,15 @@ class MonitorSession:
         last_state = self._machine.state
         lock_pending_since: float | None = None
         breaker_announced = False
+        last_known_lock_state: bool | None = None
         try:
             while stop is None or not stop():
                 now = time.monotonic()
+                screen_locked = self._poll_lock_state()
+                if screen_locked is not None:
+                    if last_known_lock_state is not None and screen_locked != last_known_lock_state:
+                        self._log.append("session_locked" if screen_locked else "session_unlocked")
+                    last_known_lock_state = screen_locked
                 rssi = self._tracker.smoothed(now)
                 distance = self._model.distance_m(rssi) if rssi is not None else None
                 must_lock = self._machine.update(distance, now)
@@ -140,6 +171,15 @@ class MonitorSession:
                                 resume_in_s=round(self._breaker.seconds_remaining(now)),
                             )
                             breaker_announced = True
+                    elif screen_locked is True:
+                        # Observer confirms the screen is already locked: skip the
+                        # redundant lock action. Counts as success for retry purposes
+                        # but is NOT registered on the breaker — no actual lock
+                        # happened. Only an affirmative True skips; None/unknown
+                        # keeps locking (invariant I1).
+                        breaker_announced = False
+                        lock_pending_since = None
+                        self._log.append("lock_skipped_already_locked")
                     else:
                         breaker_announced = False
                         if self._trigger_lock():
@@ -163,6 +203,7 @@ class MonitorSession:
                             state=self._machine.state,
                             breaker_paused=paused,
                             breaker_seconds_remaining=self._breaker.seconds_remaining(now),
+                            screen_locked=screen_locked,
                         )
                     )
 
@@ -171,7 +212,30 @@ class MonitorSession:
                 await _sleep(1.0)
         finally:
             await self._source.stop()
+            if self._observer is not None:
+                # Advisory-only resource: a failing close must not mask shutdown.
+                with contextlib.suppress(Exception):
+                    self._observer.close()
             self._log.append("monitor_stopped")
+
+    def _poll_lock_state(self) -> bool | None:
+        """Read the observed lock state, degrading any failure to "unknown".
+
+        Invariant I1: this must never raise — an observer problem downgrades to
+        None so the caller keeps locking exactly as if no observer existed.
+        """
+        if self._observer is None:
+            return None
+        try:
+            state = self._observer.current()
+        except Exception as exc:
+            if not self._observer_error_logged:
+                # Log once per error streak to avoid flooding the event log.
+                self._log.append("lock_observer_error", error=str(exc))
+                self._observer_error_logged = True
+            return None
+        self._observer_error_logged = False
+        return state
 
     def _trigger_lock(self) -> bool:
         if self._locker is None:
