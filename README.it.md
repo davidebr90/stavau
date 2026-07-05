@@ -113,9 +113,11 @@ Limiti noti (documentati in [docs/threat-model.md](docs/threat-model.md)): attac
 | Versione | Contenuto | Stato |
 |---|---|---|
 | **v0.1 (MVP)** | Monitoraggio BLE + stima distanza RSSI + blocco schermo, **CLI** (target Linux; backend Windows arrivato in anticipo) | ✅ implementata — release dopo i test di accettazione |
-| **v0.2** | **Strategy engine** di prossimità (advertisement / link GATT / fallback Bluetooth Classic con auto-selezione per dispositivo — vedi [docs/device-compatibility.md](docs/device-compatibility.md)), backend macOS | ⏳ |
+| **v0.2** | **Strategy engine** di prossimità — device intelligence + associazione pairing/senza-pairing ✅ fatto; strategie GATT-link / Bluetooth Classic e backend macOS ⏳ (vedi [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in corso |
 | **v0.3** | GUI: slider raggio, wizard di calibrazione | ⏳ |
-| **v0.4** | System tray, viewer log eventi, dark mode, i18n (EN/IT) | ⏳ |
+| **v0.4** | System tray ✅ (preview: `stavau tray`), viewer log eventi, dark mode, i18n (EN/IT) | 🚧 |
+
+**Guardrail di sicurezza (anticipato):** un circuit breaker anti-runaway mette in pausa i blocchi dopo 3 blocchi ravvicinati (configurabile), così un bug o un segnale instabile non possono mai chiuderti fuori dal tuo PC. Vedi [docs/threat-model.md](docs/threat-model.md) (T10).
 | **v1.0** | Hardening sicurezza, matrice test multi-OS completa, docs, submission ad awesome-list | ⏳ |
 
 ## Contribuire

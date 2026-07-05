@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v0.2 in progress)
+- **Anti-runaway safety guardrail** (`core/breaker.py`): a circuit breaker that pauses locking after `breaker_max_locks` locks within `breaker_window_seconds` (defaults 3 / 120 s), suppressing further locks for `breaker_cooldown_seconds` (300 s) so a bug or flapping signal can never lock the user out of their machine. Configurable, logged, covered by unit and end-to-end tests.
+- **Device intelligence** (`core/deviceid.py`): classifies the trusted device (Apple / Android / Microsoft / wearable / generic) from advertised company IDs and recommends a proximity strategy; setup probes the device, records `device_kind` / `strategy` / `association` in config, and reports them in `stavau status`.
+- **Pairing-less and paired association**: `stavau setup --pair` and a new `stavau pair` command attempt BLE bonding (best-effort via bleak) for a stable cross-rotation identity, falling back to pairing-less advertisement association with clear guidance.
+- **Shared `MonitorSession`** (`core/session.py`): unifies the `run` and `tray` monitoring loops so fail-safe and guardrail logic live in one place.
+- **System-tray preview** (`stavau tray`, optional `[tray]` extra): notification-area padlock coloured by state (near/leaving/returning/away/no-signal) and a paused padlock when the guardrail trips, live tooltip, and a "Nearby devices" picker that retargets the trusted device on the fly.
+
 ### Added
 - Project scaffolding: repository structure, governance docs, CI matrix (Windows/macOS/Linux).
 - Software specification: functional & non-functional requirements, architecture, threat model, acceptance criteria (`docs/`).

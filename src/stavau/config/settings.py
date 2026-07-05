@@ -36,12 +36,20 @@ class Settings:
     schema_version: int = SCHEMA_VERSION
     device_address: str = ""
     device_alias: str = ""
+    # Device intelligence / association (v0.2). Recorded at setup.
+    device_kind: str = "unknown"  # see core.deviceid.DeviceKind
+    strategy: str = "adv_scan"  # effective proximity strategy, see core.deviceid.Strategy
+    association: str = "pairing-less"  # "pairing-less" (advertisement) or "paired" (bonded)
     radius_m: float = 3.0
     grace_seconds: float = 10.0
     return_seconds: float = 3.0
     smoothing_window: int = 8
     rssi_at_1m: float = -59.0
     path_loss_exponent: float = 2.0
+    # Anti-runaway guardrail: pause locking after too many locks too fast.
+    breaker_max_locks: int = 3
+    breaker_window_seconds: float = 120.0
+    breaker_cooldown_seconds: float = 300.0
 
     def validate(self) -> None:
         if not self.device_address:
@@ -52,6 +60,10 @@ class Settings:
             raise ConfigError("grace_seconds must be at least 3 (anti false-positive floor)")
         if self.smoothing_window < 1:
             raise ConfigError("smoothing_window must be at least 1")
+        if self.breaker_max_locks < 1:
+            raise ConfigError("breaker_max_locks must be at least 1")
+        if self.breaker_window_seconds <= 0 or self.breaker_cooldown_seconds <= 0:
+            raise ConfigError("breaker window/cooldown seconds must be positive")
 
     def save(self, path: Path | None = None) -> Path:
         target = path or config_path()

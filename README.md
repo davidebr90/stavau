@@ -164,9 +164,11 @@ Full details: [docs/architecture.md](docs/architecture.md) · [docs/rssi-calibra
 | Version | Scope | Status |
 |---|---|---|
 | **v0.1 (MVP)** | BLE monitoring + RSSI distance estimate + screen lock, **CLI** (Linux target; Windows lock backend landed early) | ✅ implemented — release pending acceptance tests |
-| **v0.2** | Proximity **strategy engine** (advertisement / GATT link / classic-BT fallback with per-device auto-selection — see [docs/device-compatibility.md](docs/device-compatibility.md)), macOS lock backend | ⏳ |
+| **v0.2** | Proximity **strategy engine** — device intelligence + pairing/pairing-less association ✅ landed; GATT-link / classic-BT strategies and macOS lock backend ⏳ (see [docs/device-compatibility.md](docs/device-compatibility.md)) | 🚧 in progress |
 | **v0.3** | GUI: radius slider, calibration wizard | ⏳ |
-| **v0.4** | System tray, event log viewer, dark mode, i18n (EN/IT) | ⏳ |
+| **v0.4** | System tray ✅ (preview: `stavau tray`), event log viewer, dark mode, i18n (EN/IT) | 🚧 |
+
+**Safety guardrail (shipped early):** an anti-runaway circuit breaker pauses locking after 3 locks in quick succession (configurable), so a bug or a flapping signal can never lock you out of your own machine. See [docs/threat-model.md](docs/threat-model.md) (T10).
 | **v1.0** | Security hardening, full multi-OS test matrix, docs freeze, submissions to awesome-lists | ⏳ |
 
 Each milestone has explicit acceptance criteria — see [docs/acceptance-criteria.md](docs/acceptance-criteria.md).

@@ -37,7 +37,27 @@ For **Android**, a companion app (foreground service advertising or connecting t
 | RSSI of an **open LE/GATT connection** | ✅ HCI `Read RSSI` (`hcitool rssi`, works for LE and classic handles) | ❌ **No public API** (advertisement RSSI only) | ✅ `readRSSI` (exposed by bleak on Darwin only) |
 | RSSI of a bonded **classic** link | ✅ `hcitool rssi` | ❌ no public API → presence-only polling (connect attempt succeeded/failed) | ⚠️ IOBluetooth `rawRSSI` |
 
-## 5. Resulting design: the strategy engine (v0.2)
+## 5a. Implementation status (v0.2)
+
+**Landed:** device intelligence (`core/deviceid.py`) classifies the trusted
+device from advertised Bluetooth SIG company IDs (Apple `0x004C`, Samsung
+`0x0075`, Google `0x00E0`, Microsoft `0x0006`, Garmin/Fitbit) and recommends a
+strategy. `stavau setup` probes the device for 5 s, records `device_kind` /
+`strategy` / `association` in config, and `stavau status` reports them.
+Association is pairing-less by default (advertisement scanning); `stavau setup
+--pair` / `stavau pair` attempt BLE bonding (best-effort via bleak) and fall
+back to pairing-less with guidance.
+
+**Verified live:** a Samsung device is correctly classified as Android-kind, the
+engine recommends `classic_link`, honestly reports it is not yet implemented,
+and falls back to `adv_scan` with a warning.
+
+**Not yet implemented:** the `GATT_LINK` and `CLASSIC_LINK` runtime strategies
+(only `ADV_SCAN` runs today) and per-strategy RSSI acquisition. The
+classification already routes toward them and records the recommendation so the
+switch is a localized change.
+
+## 5b. Resulting design: the strategy engine (v0.2)
 
 `ProximitySource` becomes pluggable, with auto-selection per device ("device intelligence"):
 
