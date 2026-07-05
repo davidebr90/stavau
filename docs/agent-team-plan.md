@@ -26,6 +26,9 @@
 - Spend your effort in the order of Section 5 (dependencies matter). Preserve the
   invariants in Section 3 at all costs — they are safety properties, not
   preferences.
+- **Coordination, model assignment, task cards and scheduling live in
+  [agent-orchestration.md](agent-orchestration.md)** — the orchestrator executes
+  that document; workers receive only their task card.
 
 ---
 
@@ -220,6 +223,11 @@ should follow its listed dependency. Every workstream ends with the Global DoD i
   regression fixtures committed.
 
 ## 6. Coordination guidance
+
+> **Superseded for multi-agent execution** by
+> [agent-orchestration.md](agent-orchestration.md) (topology, model map, waves,
+> ready-to-launch task cards, hardware-checkpoint protocol). The notes below
+> remain valid as general background.
 
 - **Parallel now:** WS-A, WS-B, WS-G, WS-H, WS-I are largely independent — assign
   in parallel. WS-B unblocks WS-D and WS-F, so prioritize it among the first wave.
