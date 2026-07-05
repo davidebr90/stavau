@@ -64,7 +64,9 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["pystray", "pystray.*", "PIL", "PIL.*", "numpy", "numpy.*"]
+# winrt is Windows-only; pystray/PIL/numpy ship no stubs. Ignore on all platforms
+# so type-checking passes uniformly in CI (Linux/macOS/Windows).
+module = ["pystray", "pystray.*", "PIL", "PIL.*", "numpy", "numpy.*", "winrt.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
