@@ -94,6 +94,11 @@ These are enforced by tests and design. Any PR violating one is wrong.
   security boundary. Password/biometrics/FDE remain primary.
 - **I7 — Local-only, minimal identifiers.** No persistent device identifiers
   beyond what tracking needs; logs purgeable.
+- **I8 — Authorship golden rule.** Commits, pushes, code, comments and docs must
+  never contain any reference to AI assistants, AI tools, or their model/product
+  names: no `Co-Authored-By` trailers for non-human authors, no "generated
+  with/by" banners. Repository history shows the repository owner only. Model
+  tiers in orchestration docs are referred to abstractly (M1/M2/M3).
 
 ## 4. Contracts (the seams you extend)
 

@@ -1,4 +1,4 @@
-# stavau — Multi-Agent Orchestration Plan
+﻿# stavau — Multi-Agent Orchestration Plan
 
 > Operational companion to [agent-team-plan.md](agent-team-plan.md). That document
 > says **what** to build (contracts, invariants, workstreams); this one says **who
@@ -31,22 +31,22 @@ protocol violation.
 ## 2. Topology
 
 ```
-ORCHESTRATOR (Fable/Opus, 1 instance, long-lived)
+ORCHESTRATOR (M1, 1 instance, long-lived)
 │  plans waves, writes context packets, arbitrates, decides escalations,
 │  batches HV checkpoints for the maintainer
 │
-├── INTEGRATOR (Sonnet, 1) — the only writer of hotspot files
+├── INTEGRATOR (M2, 1) — the only writer of hotspot files
 │     sequential merge of worker branches; applies proposed hotspot patches;
 │     owns cli.py, config/settings.py, strategy.py factory, CHANGELOG.md
 │
 ├── WAVE WORKERS (parallel, one git worktree each, additive-only)
 │     implement exactly one task card; never touch hotspot files directly
 │
-├── REVIEWER (Sonnet, high effort; spawned per PR, stateless)
-│     adversarial review: tries to refute the DoD and break invariants I1–I7;
+├── REVIEWER (M2, high effort; spawned per PR, stateless)
+│     adversarial review: tries to refute the DoD and break invariants I1–I8;
 │     verdict CONFIRMED/REJECTED with evidence, no style nits
 │
-└── CHORE (Haiku, spawned ad hoc)
+└── CHORE (M3, spawned ad hoc)
       changelog entries, badge/docs sync, i18n string extraction, fixtures,
       mass lint fixes
 ```
@@ -57,25 +57,32 @@ pulls, never gets pushed to.
 
 ## 3. Model & effort map
 
+Model tiers are abstract on purpose (see the authorship golden rule, §4 rule 7);
+map them to whatever stack runs the team:
+
+- **M1** — the strongest reasoning tier available (highest cost; use sparingly)
+- **M2** — the standard implementation tier (the default worker)
+- **M3** — the lightweight/economical tier for mechanical work
+
 | Role / card | Model | Effort | Why |
 |---|---|---|---|
-| Orchestrator | Fable / Opus | high | planning, arbitration, security judgement; low token volume, high stakes |
-| Integrator | Sonnet | medium | mechanical-but-careful merging against green CI |
-| WS-A macOS locker | Sonnet | medium | clear contract, existing pattern to mirror |
-| WS-B contract card (B1) | Opus | high | one contract must fit three different OS event systems |
-| WS-B backend cards (B2–B4) | Sonnet | medium | implement a fixed contract each |
-| WS-C AdvertisementMonitor | Opus | high | low-level D-Bus, power semantics, fallback design |
-| WS-D GATT_LINK | Opus | high | per-OS capability gating, adaptive polling, honest degradation |
-| WS-E GUI (PySide6) | Sonnet | medium | thin shell over existing core |
-| WS-E i18n/strings | Haiku | low | mechanical extraction |
-| WS-F auto-unlock | **Fable/Opus — mandatory** | max | security-critical: a bug = unlocked screen without presence (T2/T9) |
-| WS-G radio-off | Sonnet | medium | three small platform probes + fail-safe wiring |
-| WS-H packaging | Sonnet | medium | PyInstaller + workflows, well-trodden |
-| WS-I test protocols | Haiku | low | checklist authoring from acceptance-criteria.md |
-| Reviewer | Sonnet | high | adversarial reading beats generation here; cheaper than Opus per PR |
-| Chore | Haiku | low | volume work, zero design |
+| Orchestrator | M1 | high | planning, arbitration, security judgement; low token volume, high stakes |
+| Integrator | M2 | medium | mechanical-but-careful merging against green CI |
+| WS-A macOS locker | M2 | medium | clear contract, existing pattern to mirror |
+| WS-B contract card (B1) | M1 | high | one contract must fit three different OS event systems |
+| WS-B backend cards (B2–B4) | M2 | medium | implement a fixed contract each |
+| WS-C AdvertisementMonitor | M1 | high | low-level D-Bus, power semantics, fallback design |
+| WS-D GATT_LINK | M1 | high | per-OS capability gating, adaptive polling, honest degradation |
+| WS-E GUI (PySide6) | M2 | medium | thin shell over existing core |
+| WS-E i18n/strings | M3 | low | mechanical extraction |
+| WS-F auto-unlock | **M1 — mandatory** | max | security-critical: a bug = unlocked screen without presence (T2/T9) |
+| WS-G radio-off | M2 | medium | three small platform probes + fail-safe wiring |
+| WS-H packaging | M2 | medium | PyInstaller + workflows, well-trodden |
+| WS-I test protocols | M3 | low | checklist authoring from acceptance-criteria.md |
+| Reviewer | M2 | high | adversarial reading beats generation here; cheaper than M1 per PR |
+| Chore | M3 | low | volume work, zero design |
 
-Default rule: **Haiku for mechanical, Sonnet for implementation, Opus/Fable only
+Default rule: **M3 for mechanical, M2 for implementation, M1 only
 where the cost of a mistake is high** (security, cross-OS contracts, arbitration).
 
 ## 4. Anti-waste rules (binding)
@@ -97,6 +104,13 @@ where the cost of a mistake is high** (security, cross-OS contracts, arbitration
    by the checklist in §8 — not per card.
 6. **Event-driven scheduling.** Dependent cards are launched by the orchestrator
    when the dependency merges. Workers never poll or wait.
+7. **Authorship golden rule (assoluta).** Commits, pushes, code, comments and
+   docs must **never** contain any reference to AI assistants, AI tools, or
+   their model/product names — no `Co-Authored-By` trailers for non-human
+   authors, no "generated with/by" banners, nothing. Repository history must
+   show the repository owner only. The Integrator re-checks every commit message
+   before pushing; a violation blocks the merge. (This is also invariant I8 in
+   agent-team-plan.md.)
 
 ## 5. Waves
 
@@ -113,7 +127,7 @@ plus nothing else except repo access.
 
 ---
 
-### CARD-A1 — macOS lock backend · Sonnet · worktree `ws-a-macos`
+### CARD-A1 — macOS lock backend · M2 · worktree `ws-a-macos`
 
 **Goal:** `src/stavau/platform/macos.py::MacLocker` implementing the `Locker`
 protocol (`platform/base.py`), mirroring `linux.py`'s fallback-chain style.
@@ -137,7 +151,7 @@ immediately" verified → checkpoint entry.
 
 ---
 
-### CARD-B1 — LockStateObserver contract + session wiring · Opus · worktree `ws-b-contract`
+### CARD-B1 — LockStateObserver contract + session wiring · M1 · worktree `ws-b-contract`
 
 **Goal:** define the lock-state feedback seam and wire it into the monitoring
 loop, with a fake for tests. No OS backends in this card.
@@ -179,7 +193,7 @@ equivalent via pywin32 or ctypes message window; Linux = logind
 
 ---
 
-### CARD-B2/B3/B4 — observers Windows / Linux / macOS · Sonnet · worktrees `ws-b-win|linux|mac`
+### CARD-B2/B3/B4 — observers Windows / Linux / macOS · M2 · worktrees `ws-b-win|linux|mac`
 
 Launched by the orchestrator after B1 merges, each with B1's follow-up paragraph
 as its context packet plus the contract source. Tests mock the OS event source.
@@ -188,7 +202,7 @@ lock/unlock reflected in `stavau status` on the target OS → checkpoint entry.
 
 ---
 
-### CARD-G1 — radio-off & permission fail-safe · Sonnet · worktree `ws-g-radio`
+### CARD-G1 — radio-off & permission fail-safe · M2 · worktree `ws-g-radio`
 
 **Goal:** detect "Bluetooth adapter off / permission revoked" at runtime and
 surface it as an explicit reason instead of a silent no-signal.
@@ -212,7 +226,7 @@ within grace and shows the reason → checkpoint entry.
 
 ---
 
-### CARD-H1 — packaging & release workflow · Sonnet · worktree `ws-h-pkg`
+### CARD-H1 — packaging & release workflow · M2 · worktree `ws-h-pkg`
 
 **Goal:** installable artifacts per OS + autostart documentation.
 
@@ -229,7 +243,7 @@ machine → checkpoint entry.
 
 ---
 
-### CARD-I1 — hardware test protocol · Haiku · worktree `ws-i-protocol`
+### CARD-I1 — hardware test protocol · M3 · worktree `ws-i-protocol`
 
 **Goal:** turn [acceptance-criteria.md](acceptance-criteria.md) into executable
 checklists for a human tester.

@@ -16,6 +16,7 @@ Thank you for considering a contribution! stavau is a privacy tool: correctness,
 2. **Fail-safe by default.** Error paths must lead to a *locked* screen or a no-op, never to an unlocked/disabled state.
 3. **Dependencies are liabilities.** New runtime dependencies need justification (license compatibility with AGPL-3.0, maintenance status, footprint).
 4. **OS-specific code stays in `src/stavau/platform/`.** Core logic must remain platform-agnostic and unit-testable without Bluetooth hardware.
+5. **Authorship golden rule.** Commit messages, code, comments and docs must never reference AI assistants, AI tools, or their model/product names — no `Co-Authored-By` trailers for non-human authors, no "generated with/by" banners. Repository history must show human contributors only. PRs violating this will be asked to rewrite their commits.
 
 ## Development setup
 
