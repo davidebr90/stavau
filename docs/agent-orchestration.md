@@ -104,7 +104,11 @@ where the cost of a mistake is high** (security, cross-OS contracts, arbitration
    by the checklist in §8 — not per card.
 6. **Event-driven scheduling.** Dependent cards are launched by the orchestrator
    when the dependency merges. Workers never poll or wait.
-7. **Authorship golden rule (assoluta).** Commits, pushes, code, comments and
+7. **No recursive delegation.** Workers and reviewers must NOT spawn sub-agents
+   or message other agents; every prompt states this explicitly. Lesson from
+   Wave 1: a reviewer that delegated created a self-replicating chain of
+   redundant reviewers that had to be stood down by the orchestrator.
+8. **Authorship golden rule (assoluta).** Commits, pushes, code, comments and
    docs must **never** contain any reference to AI assistants, AI tools, or
    their model/product names — no `Co-Authored-By` trailers for non-human
    authors, no "generated with/by" banners, nothing. Repository history must

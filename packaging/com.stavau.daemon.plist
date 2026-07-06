@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  stavau — macOS LaunchAgent (sample)
+
+  Runs the headless proximity monitor (`stavau run`) as a per-user background
+  agent, started at login (RunAtLoad) and restarted if it exits (KeepAlive).
+
+  Install:
+    1. Make sure `stavau` is installed for your user, e.g. via pipx:
+         pipx install stavau
+       Find its absolute path with `which stavau` and update ProgramArguments
+       below accordingly (LaunchAgents do not use your shell's PATH).
+    2. Run `stavau setup` at least once to pair a device and write a config.
+    3. Copy this file into ~/Library/LaunchAgents/:
+         mkdir -p ~/Library/LaunchAgents
+         cp packaging/com.stavau.daemon.plist ~/Library/LaunchAgents/
+    4. Load and start it:
+         launchctl load -w ~/Library/LaunchAgents/com.stavau.daemon.plist
+    5. Check status / logs:
+         launchctl list | grep com.stavau.daemon
+         cat /tmp/stavau.out.log /tmp/stavau.err.log
+
+  Uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/com.stavau.daemon.plist
+    rm ~/Library/LaunchAgents/com.stavau.daemon.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stavau.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/stavau</string>
+        <string>run</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/stavau.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/stavau.err.log</string>
+</dict>
+</plist>

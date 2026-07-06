@@ -1,0 +1,42 @@
+# stavau — systemd user unit (sample)
+#
+# Runs the headless proximity monitor (`stavau run`) as a per-user background
+# service, restarted automatically on failure, started automatically at
+# login.
+#
+# Install:
+#   1. Make sure `stavau` is installed for your user, e.g. via pipx:
+#        pipx install stavau
+#      (or point ExecStart below at the PyInstaller bundle's `stavau`
+#      binary instead, e.g. %h/.local/opt/stavau/stavau)
+#   2. Run `stavau setup` at least once to pair a device and write a config.
+#   3. Copy this file into your user systemd directory:
+#        mkdir -p ~/.config/systemd/user
+#        cp packaging/stavau.service ~/.config/systemd/user/stavau.service
+#   4. Enable and start it:
+#        systemctl --user enable --now stavau
+#   5. Check status / logs:
+#        systemctl --user status stavau
+#        journalctl --user -u stavau -f
+#
+# Uninstall:
+#   systemctl --user disable --now stavau
+#   rm ~/.config/systemd/user/stavau.service
+#   systemctl --user daemon-reload
+#
+# Note: `%h` is expanded by systemd to the invoking user's home directory.
+# Adjust ExecStart if `stavau` is not on the user's PATH inside the unit's
+# (minimal) environment — an absolute path is safest.
+
+[Unit]
+Description=stavau proximity lock monitor
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/stavau run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

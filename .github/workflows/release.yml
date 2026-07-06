@@ -1,0 +1,114 @@
+name: Release
+
+# Triggered by pushing a tag `v*` (e.g. `v0.1.0`), which builds and publishes
+# a GitHub Release with one-folder PyInstaller bundles for Windows, Linux and
+# macOS. `workflow_dispatch` is also enabled so the whole build matrix can be
+# dry-run from the Actions UI without cutting a tag (useful for verifying the
+# packaging spec on all three OSes before a real release).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            asset_name: windows-stavau
+          - os: ubuntu-latest
+            asset_name: linux-stavau
+          - os: macos-latest
+            asset_name: macos-stavau
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: pip install ".[tray]" pyinstaller
+
+      - name: Build one-folder bundle
+        working-directory: packaging
+        run: pyinstaller stavau.spec --distpath ../dist --workpath ../build --noconfirm
+
+      - name: Smoke test (--version)
+        shell: bash
+        run: |
+          if [ -f dist/stavau/stavau.exe ]; then
+            dist/stavau/stavau.exe --version
+          else
+            dist/stavau/stavau --version
+          fi
+
+      - name: Zip bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/stavau/* -DestinationPath "${{ matrix.asset_name }}.zip"
+
+      - name: Zip bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: dist/stavau
+        run: zip -r "../../${{ matrix.asset_name }}.zip" .
+
+      - name: Checksum
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            certutil -hashfile "${{ matrix.asset_name }}.zip" SHA256 | sed -n '2p' | tr -d '\r' | awk '{print $1"  ${{ matrix.asset_name }}.zip"}' > "${{ matrix.asset_name }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.asset_name }}.zip" > "${{ matrix.asset_name }}.sha256"
+          fi
+          cat "${{ matrix.asset_name }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            ${{ matrix.asset_name }}.zip
+            ${{ matrix.asset_name }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # workflow_dispatch dry-runs stop after the build+smoke-test matrix above;
+    # only a real tag push creates/updates a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble release files and combined checksum
+        run: |
+          mkdir -p release
+          find artifacts -name '*.zip' -exec cp {} release/ \;
+          find artifacts -name '*.sha256' -exec cat {} \; | sort -k2 > release/SHA256SUMS.txt
+          ls -la release
+
+      # softprops/action-gh-release is used (over raw `gh release upload`)
+      # because it creates the release and uploads all assets in one
+      # declarative step, handles the tag->release mapping automatically,
+      # and is a widely used, well-maintained third-party action — no need
+      # to hand-roll `gh release create` + a shell loop over the artifacts.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.zip
+            release/SHA256SUMS.txt
+          generate_release_notes: true
