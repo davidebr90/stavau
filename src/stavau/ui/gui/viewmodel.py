@@ -110,15 +110,75 @@ class ScanRow:
     address: str
     name: str
     rssi: float
+    kind_label: str = ""
+    distance_m: float | None = None
 
 
-def format_scan_rows(devices: list[DiscoveredDevice]) -> list[ScanRow]:
+# Emoji hints per device kind, prepended to the translated kind word so the
+# table communicates "what is this device" at a glance.
+_KIND_EMOJI = {
+    "apple": "\U0001f4f1",  # phone
+    "android": "\U0001f4f1",  # phone
+    "microsoft": "\U0001f4bb",  # laptop
+    "wearable": "⌚",  # watch
+    "generic": "\U0001f535",  # blue circle
+    "unknown": "•",  # bullet
+}
+_KIND_KEYS = {
+    "apple": "device.kind.apple",
+    "android": "device.kind.android",
+    "microsoft": "device.kind.microsoft",
+    "wearable": "device.kind.wearable",
+    "generic": "device.kind.generic",
+    "unknown": "device.kind.unknown",
+}
+
+
+def device_kind_label(company_ids: frozenset[int], name: str) -> str:
+    """Human-friendly device type ('📱 Apple', '⌚ Wearable', ...) from advertised
+    company IDs, using the same classifier the setup wizard uses."""
+    from stavau.core.deviceid import Observation, classify
+
+    kind = classify(
+        Observation(company_ids=company_ids, name=name or "", advertisement_count=1)
+    ).kind
+    emoji = _KIND_EMOJI.get(kind.value, "•")
+    return f"{emoji} {tr(_KIND_KEYS.get(kind.value, 'device.kind.unknown'))}"
+
+
+def estimate_distance(rssi: float, rssi_at_1m: float, path_loss_exponent: float) -> float | None:
+    """Estimate distance (m) from RSSI using the calibration model. None if the
+    model parameters are implausible (e.g. never calibrated to a valid range)."""
+    from stavau.core.distance import CalibrationModel
+
+    try:
+        model = CalibrationModel(rssi_at_1m=rssi_at_1m, path_loss_exponent=path_loss_exponent)
+    except ValueError:
+        return None
+    return model.distance_m(rssi)
+
+
+def format_scan_rows(
+    devices: list[DiscoveredDevice],
+    rssi_at_1m: float = -59.0,
+    path_loss_exponent: float = 2.0,
+) -> list[ScanRow]:
     """Sort discovered devices strongest-signal-first and adapt them for the table.
 
-    scan_devices() already sorts, but the view model does not trust callers to
-    preserve that invariant (e.g. after future filtering) — sort again here.
+    Each row is enriched with a device-kind label (from advertised company IDs)
+    and an estimated distance (from the current calibration), so the picker
+    shows *what* a device is and *how far* it is, not just a raw address.
     """
-    rows = [ScanRow(address=d.address, name=d.name, rssi=float(d.rssi)) for d in devices]
+    rows = [
+        ScanRow(
+            address=d.address,
+            name=d.name,
+            rssi=float(d.rssi),
+            kind_label=device_kind_label(d.company_ids, d.name),
+            distance_m=estimate_distance(float(d.rssi), rssi_at_1m, path_loss_exponent),
+        )
+        for d in devices
+    ]
     rows.sort(key=lambda r: r.rssi, reverse=True)
     return rows
 
@@ -132,6 +192,15 @@ def format_nearby_rows(devices: list[NearbyDevice]) -> list[ScanRow]:
 
 def format_rssi(rssi: float) -> str:
     return f"{rssi:.0f} dBm"
+
+
+def format_distance(distance_m: float | None) -> str:
+    """Compact estimated-distance label for the picker ('0.4 m', '~2 m', '?')."""
+    if distance_m is None:
+        return "?"
+    if distance_m < 1.0:
+        return f"{distance_m:.1f} m"
+    return f"~{distance_m:.0f} m"
 
 
 # ---------------------------------------------------------------- calibration wizard

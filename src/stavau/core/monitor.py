@@ -31,13 +31,21 @@ class DiscoveredDevice:
     address: str
     name: str
     rssi: int
+    # Bluetooth SIG company IDs seen in the advertisement's manufacturer data,
+    # used to label the device kind (Apple / Android / ...) in the picker.
+    company_ids: frozenset[int] = frozenset()
 
 
 async def scan_devices(timeout: float = 10.0) -> list[DiscoveredDevice]:
     """One-shot discovery scan for the setup wizard, strongest signal first."""
     found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     devices = [
-        DiscoveredDevice(address=address, name=device.name or "<unnamed>", rssi=adv.rssi)
+        DiscoveredDevice(
+            address=address,
+            name=adv.local_name or device.name or "<unnamed>",
+            rssi=adv.rssi,
+            company_ids=frozenset(adv.manufacturer_data.keys()),
+        )
         for address, (device, adv) in found.items()
     ]
     devices.sort(key=lambda d: d.rssi, reverse=True)

@@ -221,6 +221,42 @@ def test_format_scan_rows_empty() -> None:
     assert vm.format_scan_rows([]) == []
 
 
+def test_format_scan_rows_enriches_kind_and_distance() -> None:
+    from stavau.core.deviceid import APPLE_COMPANY_ID
+
+    devices = [
+        DiscoveredDevice(
+            address="AA", name="phone", rssi=-59, company_ids=frozenset({APPLE_COMPANY_ID})
+        )
+    ]
+    rows = vm.format_scan_rows(devices, rssi_at_1m=-59.0, path_loss_exponent=2.0)
+    assert "Apple" in rows[0].kind_label
+    # -59 dBm at the 1 m reference -> ~1 m.
+    assert rows[0].distance_m is not None
+    assert abs(rows[0].distance_m - 1.0) < 0.1
+
+
+def test_device_kind_label_variants() -> None:
+    from stavau.core.deviceid import APPLE_COMPANY_ID, SAMSUNG_COMPANY_ID
+
+    set_language("en")
+    assert "Apple" in vm.device_kind_label(frozenset({APPLE_COMPANY_ID}), "")
+    assert "Android" in vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "")
+    # No vendor company id but it advertises -> a generic BLE device.
+    assert "BLE device" in vm.device_kind_label(frozenset(), "")
+
+
+def test_format_distance_bands() -> None:
+    assert vm.format_distance(None) == "?"
+    assert vm.format_distance(0.4) == "0.4 m"
+    assert vm.format_distance(2.3) == "~2 m"
+
+
+def test_estimate_distance_invalid_model_is_none() -> None:
+    # path_loss_exponent out of the plausible range -> CalibrationModel rejects.
+    assert vm.estimate_distance(-60.0, -59.0, 99.0) is None
+
+
 def test_format_nearby_rows_sorts_strongest_first() -> None:
     devices = [
         NearbyDevice(address="AA", name="weak", rssi=-90.0, age_seconds=1.0),

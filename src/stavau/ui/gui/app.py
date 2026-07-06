@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -414,31 +415,66 @@ class MainWindow(QMainWindow):
     def _build_device_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
 
         self._device_label = QLabel()
         self._device_label.setWordWrap(True)
         self._refresh_device_label()
         layout.addWidget(self._device_label)
 
+        top_row = QHBoxLayout()
         self._scan_button = QPushButton(tr("device.scan_button"))
         self._scan_button.setObjectName("Primary")
         self._scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._scan_button.clicked.connect(self._on_scan_clicked)
-        scan_row = QHBoxLayout()
-        scan_row.addWidget(self._scan_button)
-        scan_row.addStretch(1)
-        layout.addLayout(scan_row)
-
+        top_row.addWidget(self._scan_button)
         self._scan_status = QLabel("")
-        layout.addWidget(self._scan_status)
+        self._scan_status.setObjectName("Muted")
+        top_row.addWidget(self._scan_status, 1)
+        layout.addLayout(top_row)
 
-        self._scan_table = QTableWidget(0, 3)
+        hint = QLabel(tr("device.select_hint"))
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # Type | Name | Est. distance | Signal | Address — the type + distance
+        # columns are what actually tell you which nearby device is your phone.
+        self._scan_table = QTableWidget(0, 5)
         self._scan_table.setHorizontalHeaderLabels(
-            [tr("device.table_rssi"), tr("device.table_address"), tr("device.table_name")]
+            [
+                tr("device.table_type"),
+                tr("device.table_name"),
+                tr("device.table_distance"),
+                tr("device.table_signal"),
+                tr("device.table_address"),
+            ]
         )
         self._scan_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._scan_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._scan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._scan_table.verticalHeader().setVisible(False)
+        header = self._scan_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._scan_table.itemSelectionChanged.connect(self._on_scan_row_selected)
-        layout.addWidget(self._scan_table)
+        self._scan_table.itemDoubleClicked.connect(lambda _item: self._use_selected_device())
+        layout.addWidget(self._scan_table, 1)  # stretch: fill the card
+
+        bottom_row = QHBoxLayout()
+        self._selected_note = QLabel("")
+        self._selected_note.setObjectName("Muted")
+        self._selected_note.setWordWrap(True)
+        bottom_row.addWidget(self._selected_note, 1)
+        self._use_button = QPushButton(tr("device.use_button"))
+        self._use_button.setObjectName("Primary")
+        self._use_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._use_button.setEnabled(False)
+        self._use_button.clicked.connect(self._use_selected_device)
+        bottom_row.addWidget(self._use_button)
+        layout.addLayout(bottom_row)
 
         self._scan_rows: list[vm.ScanRow] = []
         return widget
@@ -481,23 +517,47 @@ class MainWindow(QMainWindow):
 
     def _on_scan_finished(self, devices: list[object]) -> None:
         self._scan_button.setEnabled(True)
-        rows = vm.format_scan_rows(devices)  # type: ignore[arg-type]
+        rows = vm.format_scan_rows(
+            devices,  # type: ignore[arg-type]
+            self._settings.rssi_at_1m,
+            self._settings.path_loss_exponent,
+        )
         self._scan_rows = rows
         self._scan_status.setText(tr("device.scan_found", count=len(rows)))
         self._scan_table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            self._scan_table.setItem(i, 0, QTableWidgetItem(vm.format_rssi(row.rssi)))
-            self._scan_table.setItem(i, 1, QTableWidgetItem(row.address))
-            self._scan_table.setItem(i, 2, QTableWidgetItem(row.name))
+            self._scan_table.setItem(i, 0, QTableWidgetItem(row.kind_label))
+            self._scan_table.setItem(i, 1, QTableWidgetItem(row.name))
+            self._scan_table.setItem(i, 2, QTableWidgetItem(vm.format_distance(row.distance_m)))
+            self._scan_table.setItem(i, 3, QTableWidgetItem(vm.format_rssi(row.rssi)))
+            self._scan_table.setItem(i, 4, QTableWidgetItem(row.address))
+
+    def _selected_scan_row(self) -> vm.ScanRow | None:
+        selected = self._scan_table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        index = selected[0].row()
+        if index >= len(self._scan_rows):
+            return None
+        return self._scan_rows[index]
 
     def _on_scan_row_selected(self) -> None:
-        selected = self._scan_table.selectedIndexes()
-        if not selected:
+        # Selecting a row only *highlights* it and previews the choice; the
+        # trusted device is committed explicitly by the "Use this device"
+        # button (or a double-click), so nothing changes by accident.
+        row = self._selected_scan_row()
+        self._use_button.setEnabled(row is not None)
+        if row is not None:
+            self._selected_note.setText(
+                tr("device.selected_note", name=row.name, address=row.address)
+            )
+        else:
+            self._selected_note.setText("")
+
+    def _use_selected_device(self) -> None:
+        row = self._selected_scan_row()
+        if row is None:
             return
-        row_index = selected[0].row()
-        if row_index >= len(self._scan_rows):
-            return
-        row = self._scan_rows[row_index]
         self._settings.device_address = row.address.upper()
         self._settings.device_alias = row.name if row.name != "<unnamed>" else row.address
         self._settings.save()
