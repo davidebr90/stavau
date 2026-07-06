@@ -34,6 +34,9 @@ tray = [
 macos = [
   "pyobjc-framework-Cocoa>=10",
 ]
+gui = [
+  "PySide6>=6.6",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov",

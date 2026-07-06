@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added (v0.2 in progress)
+- **adv_monitor strategy** (`core/advmonitor.py`, Linux): controller-offloaded presence via BlueZ AdvertisementMonitor1 with RSSI thresholds derived from the calibrated safety radius; degrades internally to advertisement scanning when unsupported, and a bus-liveness watchdog stops synthesized presence if BlueZ dies (fail-safe).
+- **gatt_link strategy** (`core/gattlink.py`, macOS/Linux): RSSI polled over a held BLE connection with adaptive battery-friendly intervals and capped reconnect backoff; unsupported on Windows (no public connected-RSSI API) with honest fallback.
+- **Graphical interface MVP** (`stavau gui`, optional `[gui]` extra, PySide6): device scan/picker, radius slider and settings editor, live monitor panel, calibration wizard — a thin shell over the existing core with a Qt-free, fully tested viewmodel.
+- `CalibrationModel.rssi_at`: inverse of the distance model, used to map the safety radius to controller-side RSSI thresholds.
 - **macOS lock backend** (`platform/macos.py`): `CGSession -suspend` with `pmset displaysleepnow` fallback, mirroring the Linux attempt-recording chain — the lock action now covers all three OSes.
 - **Lock-state feedback (closed loop)**: `LockStateObserver` contract (`platform/lockstate.py`) wired into the monitoring session — redundant locks are skipped only on an affirmative already-locked state (unknown/error never suppresses locking); real `session_locked`/`session_unlocked` transitions are logged; `Tick` exposes `screen_locked`. Per-OS backends: Windows (WTS session notifications via a ctypes message-only window), Linux (systemd-logind `LockedHint` + signals via dbus-fast), macOS (`com.apple.screenIsLocked` distributed notifications via the new optional `[macos]` extra).
 - **Radio-off detection** (`core/radiostate.py`): when the signal is stale and the Bluetooth adapter is off (WinRT Radios on Windows, `bluetoothctl` on Linux), CLI and tray show "BLUETOOTH OFF" instead of a generic no-signal; explanation only — the staleness fail-safe lock is unchanged.

@@ -31,14 +31,19 @@ class DeviceKind(Enum):
 
 class Strategy(Enum):
     ADV_SCAN = "adv_scan"  # scan advertisements + RSSI (implemented, v0.1)
-    GATT_LINK = "gatt_link"  # RSSI over a held GATT connection (planned)
-    CLASSIC_LINK = "classic_link"  # bonded Bluetooth Classic link (planned)
+    GATT_LINK = "gatt_link"  # RSSI over a held GATT connection (macOS/Linux)
+    CLASSIC_LINK = "classic_link"  # bonded Bluetooth Classic link
+    ADV_MONITOR = "adv_monitor"  # BlueZ controller-offloaded monitoring (Linux)
 
 
 # Strategies with a working runtime implementation. CLASSIC_LINK runs with real
-# RSSI on Linux (hcitool) and reachability on Windows (WinRT); GATT_LINK is
-# still planned.
-IMPLEMENTED_STRATEGIES = frozenset({Strategy.ADV_SCAN, Strategy.CLASSIC_LINK})
+# RSSI on Linux (hcitool) and reachability on Windows (WinRT); ADV_MONITOR is
+# Linux-only (BlueZ AdvertisementMonitor1, degrades to adv_scan at runtime);
+# GATT_LINK holds a BLE connection and polls its RSSI on macOS (bleak) and
+# Linux (hcitool) - on Windows it falls back to adv_scan.
+IMPLEMENTED_STRATEGIES = frozenset(
+    {Strategy.ADV_SCAN, Strategy.CLASSIC_LINK, Strategy.ADV_MONITOR, Strategy.GATT_LINK}
+)
 
 
 @dataclass(frozen=True)

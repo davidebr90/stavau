@@ -78,7 +78,16 @@ class MonitorSession:
         )
         self._machine = self._new_machine()
         self._tracker = RssiTracker(smoothing_window=settings.smoothing_window)
-        built = build_source(settings.strategy, settings.device_address, self._tracker, nearby)
+        built = build_source(
+            settings.strategy,
+            settings.device_address,
+            self._tracker,
+            nearby,
+            radius_m=settings.radius_m,
+            grace_seconds=settings.grace_seconds,
+            rssi_at_1m=settings.rssi_at_1m,
+            path_loss_exponent=settings.path_loss_exponent,
+        )
         self._source = built.source
         self._effective_strategy = built.effective_strategy
         self._strategy_note = built.note

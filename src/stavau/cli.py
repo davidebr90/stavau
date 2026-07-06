@@ -49,10 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_setup.add_argument(
         "--strategy",
-        choices=["auto", "adv_scan", "classic_link"],
+        choices=["auto", "adv_scan", "classic_link", "adv_monitor", "gatt_link"],
         default="auto",
         help="proximity strategy: 'auto' detects it from the device (default); "
-        "force 'classic_link' for an idle Android that does not advertise",
+        "'classic_link' for an idle Android that does not advertise; "
+        "'adv_monitor' offloads presence to the controller (Linux/BlueZ, low power); "
+        "'gatt_link' polls RSSI over a held BLE connection (macOS/Linux)",
     )
     p_setup.set_defaults(func=cmd_setup)
 
@@ -78,6 +80,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="log lock decisions without actually locking the screen",
     )
     p_tray.set_defaults(func=cmd_tray)
+
+    p_gui = sub.add_parser("gui", help="open the graphical interface (requires stavau[gui])")
+    p_gui.set_defaults(func=cmd_gui)
 
     p_status = sub.add_parser("status", help="show connection state, RSSI and estimated distance")
     p_status.add_argument("--timeout", type=float, default=8.0, help="listen seconds")
@@ -387,6 +392,25 @@ def cmd_tray(args: argparse.Namespace) -> int:
         return 2
     locker: Locker | None = None if args.dry_run else get_locker()
     return run_tray(settings, locker)
+
+
+# ---------------------------------------------------------------- gui
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    try:
+        from stavau.ui.gui.app import run_gui
+    except ImportError:
+        print(
+            "gui dependencies missing - install them with: pip install 'stavau[gui]'",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        settings: Settings | None = Settings.load()
+    except ConfigError:
+        settings = None  # first run: the GUI guides device selection
+    return run_gui(settings)
 
 
 # ---------------------------------------------------------------- status

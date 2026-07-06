@@ -11,6 +11,7 @@ consumed raw: pass samples through `RssiSmoother` first.
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections import deque
 from dataclasses import dataclass
@@ -38,6 +39,16 @@ class CalibrationModel:
     def distance_m(self, rssi: float) -> float:
         """Estimated distance in metres for a (smoothed) RSSI value in dBm."""
         return float(10 ** ((self.rssi_at_1m - rssi) / (10 * self.path_loss_exponent)))
+
+    def rssi_at(self, distance_m: float) -> float:
+        """Inverse of `distance_m`: expected RSSI in dBm at a distance (> 0 m).
+
+        Used to translate a safety radius into controller-side RSSI
+        thresholds (see core.advmonitor.thresholds_from_settings).
+        """
+        if distance_m <= 0:
+            raise ValueError("distance_m must be positive")
+        return float(self.rssi_at_1m - 10 * self.path_loss_exponent * math.log10(distance_m))
 
 
 class RssiSmoother:
