@@ -8,13 +8,18 @@ imported (lazy, from the CLI's `gui` subcommand).
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 from stavau.config.settings import ConfigError, Settings
 from stavau.core.monitor import DiscoveredDevice, NearbyDevice
 from stavau.core.presence import PresenceState
 from stavau.core.session import Tick
+from stavau.i18n import set_language, tr
 from stavau.ui.gui import viewmodel as vm
+
+_CATALOGS_DIR = Path(__file__).resolve().parents[1] / "src" / "stavau" / "i18n" / "catalogs"
 
 
 def test_viewmodel_imports_without_qt() -> None:
@@ -283,3 +288,226 @@ def test_summarize_calibration_fit_no_usable_stations_message_no_crash() -> None
     assert not outcome.ok
     assert "no usable samples" in outcome.message.lower()
     assert outcome.rssi_at_1m is None
+
+
+# ---------------------------------------------------------------- icon_color (CARD-E2 request 2)
+
+
+def _paused_tick(**overrides: object) -> Tick:
+    return _tick(breaker_paused=True, breaker_seconds_remaining=30.0, **overrides)  # type: ignore[arg-type]
+
+
+def test_icon_color_no_device_configured_is_blue_even_with_no_tick() -> None:
+    assert vm.icon_color(None, radius_m=3.0, has_device=False) == vm.ICON_BLUE
+
+
+def test_icon_color_no_device_configured_is_blue_even_with_a_tick() -> None:
+    """Missing device takes precedence over whatever the (stale) tick says."""
+    tick = _tick(state=PresenceState.NEAR, rssi=-50.0, distance=1.0)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=False) == vm.ICON_BLUE
+
+
+def test_icon_color_no_monitor_running_device_configured_is_grey() -> None:
+    assert vm.icon_color(None, radius_m=3.0, has_device=True) == vm.ICON_GREY
+
+
+def test_icon_color_no_signal_is_grey() -> None:
+    tick = _tick(state=PresenceState.LEAVING, rssi=None, distance=None, radio_off=False)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_GREY
+
+
+def test_icon_color_bluetooth_off_case_is_also_grey() -> None:
+    tick = _tick(state=PresenceState.LEAVING, rssi=None, distance=None, radio_off=True)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_GREY
+
+
+def test_icon_color_green_band_well_within_radius() -> None:
+    tick = _tick(state=PresenceState.NEAR, rssi=-50.0, distance=1.0)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_GREEN
+
+
+def test_icon_color_green_yellow_boundary_is_green() -> None:
+    """distance == 0.6 * radius is inclusive on the green side."""
+    radius = 3.0
+    tick = _tick(state=PresenceState.NEAR, rssi=-50.0, distance=0.6 * radius)
+    assert vm.icon_color(tick, radius_m=radius, has_device=True) == vm.ICON_GREEN
+
+
+def test_icon_color_just_above_green_boundary_is_yellow() -> None:
+    tick = _tick(state=PresenceState.NEAR, rssi=-50.0, distance=1.81)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_YELLOW
+
+
+def test_icon_color_yellow_band() -> None:
+    tick = _tick(state=PresenceState.NEAR, rssi=-50.0, distance=2.5)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_YELLOW
+
+
+def test_icon_color_yellow_orange_boundary_is_yellow() -> None:
+    """distance == radius is inclusive on the yellow side."""
+    tick = _tick(state=PresenceState.LEAVING, rssi=-70.0, distance=3.0)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_YELLOW
+
+
+def test_icon_color_just_above_radius_is_orange() -> None:
+    tick = _tick(state=PresenceState.LEAVING, rssi=-70.0, distance=3.01)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_ORANGE
+
+
+def test_icon_color_orange_band_leaving_grace() -> None:
+    tick = _tick(state=PresenceState.LEAVING, rssi=-80.0, distance=5.0)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_ORANGE
+
+
+def test_icon_color_away_state_is_red_regardless_of_distance() -> None:
+    """Away (locked/fail-safe) wins over the distance bands entirely."""
+    tick = _tick(state=PresenceState.AWAY, rssi=-40.0, distance=0.1)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_RED
+
+
+def test_icon_color_away_state_with_no_signal_is_still_red() -> None:
+    tick = _tick(state=PresenceState.AWAY, rssi=None, distance=None, radio_off=True)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == vm.ICON_RED
+
+
+def test_icon_color_paused_takes_precedence_over_away() -> None:
+    tick = _paused_tick(state=PresenceState.AWAY, rssi=-40.0, distance=0.1)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == "paused"
+
+
+def test_icon_color_paused_takes_precedence_over_no_device() -> None:
+    tick = _paused_tick(state=PresenceState.NEAR, rssi=-40.0, distance=0.1)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=False) == "paused"
+
+
+def test_icon_color_paused_takes_precedence_over_no_signal() -> None:
+    tick = _paused_tick(state=PresenceState.LEAVING, rssi=None, distance=None)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == "paused"
+
+
+def test_icon_color_paused_takes_precedence_over_normal_bands() -> None:
+    tick = _paused_tick(state=PresenceState.NEAR, rssi=-50.0, distance=1.0)
+    assert vm.icon_color(tick, radius_m=3.0, has_device=True) == "paused"
+
+
+def test_icon_color_tokens_are_distinct() -> None:
+    tokens = {
+        vm.ICON_BLUE,
+        vm.ICON_GREY,
+        vm.ICON_GREEN,
+        vm.ICON_YELLOW,
+        vm.ICON_ORANGE,
+        vm.ICON_RED,
+        vm.ICON_PAUSED,
+    }
+    assert len(tokens) == 7
+
+
+# ---------------------------------------------------------------- i18n-backed viewmodel strings
+
+
+def test_catalogs_have_identical_key_sets() -> None:
+    en = json.loads((_CATALOGS_DIR / "en.json").read_text(encoding="utf-8"))
+    it = json.loads((_CATALOGS_DIR / "it.json").read_text(encoding="utf-8"))
+    assert set(en.keys()) == set(it.keys())
+
+
+def test_format_status_english_default() -> None:
+    tick = _tick(state=PresenceState.NEAR, rssi=-55.0, distance=1.23)
+    assert vm.format_status(tick) == "near - 1.2 m (-55 dBm)"
+
+
+def test_format_status_italian() -> None:
+    set_language("it")
+    tick = _tick(state=PresenceState.NEAR, rssi=-55.0, distance=1.23)
+    assert vm.format_status(tick) == "vicino - 1.2 m (-55 dBm)"
+
+
+def test_format_status_italian_no_signal() -> None:
+    set_language("it")
+    tick = _tick(state=PresenceState.AWAY, rssi=None, distance=None, radio_off=False)
+    assert vm.format_status(tick) == "assente - nessun segnale"
+
+
+def test_format_status_italian_bluetooth_off() -> None:
+    set_language("it")
+    tick = _tick(state=PresenceState.AWAY, rssi=None, distance=None, radio_off=True)
+    assert vm.format_status(tick) == "assente - BLUETOOTH SPENTO"
+
+
+def test_format_status_italian_breaker_paused() -> None:
+    set_language("it")
+    tick = _tick(
+        state=PresenceState.AWAY,
+        rssi=None,
+        distance=None,
+        breaker_paused=True,
+        breaker_seconds_remaining=42.0,
+    )
+    assert vm.format_status(tick) == "protezione in pausa - 42 s rimanenti"
+
+
+def test_state_label_italian() -> None:
+    set_language("it")
+    assert vm.state_label(PresenceState.NEAR) == "vicino"
+    assert vm.state_label(PresenceState.LEAVING) == "in allontanamento"
+    assert vm.state_label(PresenceState.AWAY) == "assente"
+    assert vm.state_label(PresenceState.RETURNING) == "in ritorno"
+
+
+def test_strategy_caveat_italian_windows() -> None:
+    set_language("it")
+    text = vm.strategy_caveat("classic_link", "win32")
+    assert "raggiungibilità" in text.lower()
+
+
+def test_strategy_caveat_italian_linux() -> None:
+    set_language("it")
+    text = vm.strategy_caveat("classic_link", "linux")
+    assert "rssi reale" in text.lower()
+
+
+def test_validate_settings_message_ok_italian() -> None:
+    set_language("it")
+    result = vm.validate_settings_message(_valid_settings())
+    assert result.ok
+    assert result.message == "Le impostazioni sono valide."
+
+
+def test_summarize_station_italian() -> None:
+    set_language("it")
+    result = vm.summarize_station(1.0, [-50.0, -52.0, -49.0, -51.0])
+    assert result.ok
+    assert "campioni" in result.message
+
+
+def test_summarize_station_skipped_italian() -> None:
+    set_language("it")
+    result = vm.summarize_station(3.0, [-60.0])
+    assert not result.ok
+    assert "saltata" in result.message.lower()
+
+
+def test_summarize_calibration_fit_italian() -> None:
+    set_language("it")
+    stations = [
+        vm.summarize_station(1.0, [-50.0, -51.0, -49.0]),
+        vm.summarize_station(3.0, [-65.0, -66.0, -64.0]),
+    ]
+    outcome = vm.summarize_calibration_fit(stations)
+    assert outcome.ok
+    assert "Calibrato" in outcome.message
+
+
+def test_summarize_calibration_fit_no_samples_italian() -> None:
+    set_language("it")
+    stations = [vm.summarize_station(1.0, []), vm.summarize_station(3.0, [])]
+    outcome = vm.summarize_calibration_fit(stations)
+    assert not outcome.ok
+    assert "non riuscita" in outcome.message.lower()
+
+
+def test_tr_direct_smoke_test_both_languages() -> None:
+    assert tr("tab.settings") == "Settings"
+    set_language("it")
+    assert tr("tab.settings") == "Impostazioni"

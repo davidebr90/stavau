@@ -40,6 +40,9 @@ class Settings:
     device_kind: str = "unknown"  # see core.deviceid.DeviceKind
     strategy: str = "adv_scan"  # effective proximity strategy, see core.deviceid.Strategy
     association: str = "pairing-less"  # "pairing-less" (advertisement) or "paired" (bonded)
+    # UI language: "auto" resolves to the OS language when a catalog exists,
+    # falling back to English (see stavau.i18n.resolve_language).
+    language: str = "auto"
     radius_m: float = 3.0
     grace_seconds: float = 10.0
     return_seconds: float = 3.0

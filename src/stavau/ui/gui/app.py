@@ -10,6 +10,14 @@ widgets and worker threads.
 Threading model mirrors `ui/tray.py`: `MonitorSession.run()` is async and is
 driven on a background `QThread` via `asyncio.run`; the thread emits a Qt
 signal per tick, and the UI updates only on the main thread in the slot.
+
+The header shows the "stavau" wordmark as styled text only (no logo image -
+CARD-E2 request 1). The window/taskbar icon and an owned system tray icon are
+both regenerated from the pure `viewmodel.icon_color` decision on every tick
+(CARD-E2 request 2); the small padlock drawing is duplicated from
+`ui/tray.py` rather than imported, so pystray/Pillow never become a GUI
+dependency. All user-visible strings go through `stavau.i18n.tr()` (CARD-E2
+request 3).
 """
 
 from __future__ import annotations
@@ -17,10 +25,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
-from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -37,6 +44,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -44,28 +52,69 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from stavau import __version__
 from stavau.config.settings import Settings, event_log_path
 from stavau.core.deviceid import IMPLEMENTED_STRATEGIES, Strategy
 from stavau.core.events import EventLog
 from stavau.core.monitor import NearbyCache, sample_rssi, scan_devices
 from stavau.core.session import MonitorSession, Tick
+from stavau.i18n import available_languages, resolve_language, set_language, tr
 from stavau.platform.base import Locker, get_locker
 from stavau.ui.gui import viewmodel as vm
 
-_LOGO_CANDIDATES = ("stavau_light_transparent.png", "stavau_dark_transparent.png")
+# ---------------------------------------------------------------- state icon
 
 
-def _find_logo() -> Path | None:
-    """Best-effort lookup of a repo-root logo/ file; optional, never required."""
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        logo_dir = parent / "logo"
-        if logo_dir.is_dir():
-            for name in _LOGO_CANDIDATES:
-                candidate = logo_dir / name
-                if candidate.is_file():
-                    return candidate
-    return None
+def _padlock_pixmap(color: tuple[int, int, int], paused: bool = False, size: int = 64) -> QPixmap:
+    """Draw a padlock silhouette filled with the state colour.
+
+    Deliberately duplicated (not imported) from `ui/tray.py::_padlock_image`:
+    that module pulls in pystray/Pillow, which must stay a `[tray]`-only
+    dependency and never leak into the `[gui]` extra. The two drawings render
+    the same silhouette/keyhole/pause-bar convention using each toolkit's
+    native primitives (Pillow there, QPainter here).
+    """
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    scale = size / 64.0
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        fill = QColor(*color)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        shackle_pen = painter.pen()
+        shackle_pen.setWidthF(7 * scale)
+        shackle_pen.setColor(fill)
+        painter.setPen(shackle_pen)
+        painter.drawArc(
+            int(18 * scale), int(8 * scale), int(28 * scale), int(28 * scale), 0, 180 * 16
+        )
+        painter.drawLine(int(21 * scale), int(22 * scale), int(21 * scale), int(34 * scale))
+        painter.drawLine(int(43 * scale), int(22 * scale), int(43 * scale), int(34 * scale))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(
+            int(12 * scale), int(30 * scale), int(40 * scale), int(28 * scale), 9 * scale, 9 * scale
+        )
+        inner = QColor(255, 255, 255, 235)
+        painter.setBrush(inner)
+        if paused:
+            painter.drawRect(int(26 * scale), int(38 * scale), int(4 * scale), int(14 * scale))
+            painter.drawRect(int(34 * scale), int(38 * scale), int(4 * scale), int(14 * scale))
+        else:
+            painter.drawEllipse(int(27 * scale), int(37 * scale), int(10 * scale), int(10 * scale))
+            painter.drawRect(int(30 * scale), int(44 * scale), int(4 * scale), int(8 * scale))
+    finally:
+        painter.end()
+    return pixmap
+
+
+def _icon_for_tick(tick_or_none: Tick | None, radius_m: float, has_device: bool) -> QIcon:
+    """Render the pure `viewmodel.icon_color` decision into a Qt icon."""
+    decision = vm.icon_color(tick_or_none, radius_m, has_device)
+    if decision == "paused":
+        return QIcon(_padlock_pixmap(vm.ICON_PAUSED, paused=True))
+    return QIcon(_padlock_pixmap(decision))
 
 
 # ---------------------------------------------------------------- scan worker
@@ -145,7 +194,7 @@ class CalibrationWizard(QDialog):
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Calibration wizard")
+        self.setWindowTitle(tr("calibration.wizard_title"))
         self._settings = settings
         self._station_index = 0
         self._results: list[vm.CalibrationStationResult] = []
@@ -163,7 +212,7 @@ class CalibrationWizard(QDialog):
         layout.addWidget(self._status)
 
         buttons = QHBoxLayout()
-        self._sample_button = QPushButton("Sample")
+        self._sample_button = QPushButton(tr("calibration.sample_button"))
         self._sample_button.clicked.connect(self._on_sample_clicked)
         buttons.addWidget(self._sample_button)
         layout.addLayout(buttons)
@@ -177,13 +226,17 @@ class CalibrationWizard(QDialog):
     def _show_station_prompt(self) -> None:
         distance = self._STATIONS[self._station_index]
         self._instructions.setText(
-            f"Step {self._station_index + 1} of {len(self._STATIONS)}: stand at {distance:g} m "
-            "from this computer with the device where you normally carry it, then press Sample."
+            tr(
+                "calibration.wizard_step",
+                step=self._station_index + 1,
+                total=len(self._STATIONS),
+                distance=distance,
+            )
         )
 
     def _on_sample_clicked(self) -> None:
         self._sample_button.setEnabled(False)
-        self._status.setText("Sampling...")
+        self._status.setText(tr("calibration.sampling"))
         self._thread = QThread(self)
         self._worker = _SampleWorker(self._settings.device_address, self._SAMPLE_SECONDS)
         self._worker.moveToThread(self._thread)
@@ -196,7 +249,7 @@ class CalibrationWizard(QDialog):
 
     def _on_sample_failed(self, error: str) -> None:
         self._sample_button.setEnabled(True)
-        self._status.setText(f"Sampling failed: {error}")
+        self._status.setText(tr("calibration.sampling_failed", error=error))
 
     def _on_samples(self, samples: list[float]) -> None:
         distance = self._STATIONS[self._station_index]
@@ -214,7 +267,7 @@ class CalibrationWizard(QDialog):
     def _finish(self) -> None:
         outcome = vm.summarize_calibration_fit(self._results)
         self._outcome = outcome
-        self._instructions.setText("Calibration complete.")
+        self._instructions.setText(tr("calibration.complete_title"))
         self._status.setText(outcome.message)
         self._sample_button.setEnabled(False)
         if outcome.ok:
@@ -236,27 +289,48 @@ class CalibrationWizard(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("stavau")
         self._settings = settings if settings is not None else _load_or_default_settings()
+        set_language(resolve_language(getattr(self._settings, "language", "auto")))
 
-        logo_path = _find_logo()
-        if logo_path is not None:
-            pixmap = QPixmap(str(logo_path))
-            if not pixmap.isNull():
-                self.setWindowIcon(QIcon(pixmap))
+        self.setWindowTitle(tr("app.header_title"))
 
         self._scan_thread: QThread | None = None
         self._scan_worker: _ScanWorker | None = None
         self._monitor_thread: QThread | None = None
         self._monitor_worker: _MonitorWorker | None = None
 
+        header = QLabel(tr("app.header_title"))
+        header.setStyleSheet("font-size: 20px; font-weight: 600; padding: 6px;")
+        header.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
         tabs = QTabWidget()
-        tabs.addTab(self._build_device_tab(), "Device")
-        tabs.addTab(self._build_settings_tab(), "Settings")
-        tabs.addTab(self._build_monitor_tab(), "Monitor")
-        tabs.addTab(self._build_calibration_tab(), "Calibration")
-        self.setCentralWidget(tabs)
+        tabs.addTab(self._build_device_tab(), tr("tab.device"))
+        tabs.addTab(self._build_settings_tab(), tr("tab.settings"))
+        tabs.addTab(self._build_monitor_tab(), tr("tab.monitor"))
+        tabs.addTab(self._build_calibration_tab(), tr("tab.calibration"))
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.addWidget(header)
+        central_layout.addWidget(tabs)
+        self.setCentralWidget(central)
         self.resize(640, 480)
+
+        # System tray icon (CARD-E2 request 2): owned by the window, mirrors
+        # the window/taskbar icon, both regenerated from the same pure
+        # icon_color() decision. No monitor running yet -> idle icon.
+        self._tray_icon = QSystemTrayIcon(self)
+        self._tray_icon.setToolTip(f"stavau {__version__}")
+        self._refresh_state_icon(None)
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray_icon.show()
+
+    def _refresh_state_icon(self, tick: Tick | None) -> None:
+        """Regenerate the taskbar (window) icon and the tray icon together."""
+        icon = _icon_for_tick(tick, self._settings.radius_m, bool(self._settings.device_address))
+        self.setWindowIcon(icon)
+        self._tray_icon.setIcon(icon)
 
     # ------------------------------------------------------------- DEVICE tab
 
@@ -268,7 +342,7 @@ class MainWindow(QMainWindow):
         self._refresh_device_label()
         layout.addWidget(self._device_label)
 
-        self._scan_button = QPushButton("Scan")
+        self._scan_button = QPushButton(tr("device.scan_button"))
         self._scan_button.clicked.connect(self._on_scan_clicked)
         layout.addWidget(self._scan_button)
 
@@ -276,7 +350,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._scan_status)
 
         self._scan_table = QTableWidget(0, 3)
-        self._scan_table.setHorizontalHeaderLabels(["RSSI", "Address", "Name"])
+        self._scan_table.setHorizontalHeaderLabels(
+            [tr("device.table_rssi"), tr("device.table_address"), tr("device.table_name")]
+        )
         self._scan_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._scan_table.itemSelectionChanged.connect(self._on_scan_row_selected)
         layout.addWidget(self._scan_table)
@@ -287,12 +363,25 @@ class MainWindow(QMainWindow):
     def _refresh_device_label(self) -> None:
         s = self._settings
         self._device_label.setText(
-            f"Trusted device: {s.device_alias or '(none)'}  ({s.device_address or 'not set'})"
+            tr(
+                "device.trusted_label",
+                alias=s.device_alias or tr("device.alias_none"),
+                address=s.device_address or tr("device.address_not_set"),
+            )
         )
+        self._refresh_state_icon_if_ready()
+
+    def _refresh_state_icon_if_ready(self) -> None:
+        # Guarded: called from _refresh_device_label(), which also runs once
+        # during __init__ before self._tray_icon exists (initial label paint).
+        # Only meaningful when idle - a running monitor gets its icon refresh
+        # from _on_tick() instead.
+        if hasattr(self, "_tray_icon") and self._monitor_thread is None:
+            self._refresh_state_icon(None)
 
     def _on_scan_clicked(self) -> None:
         self._scan_button.setEnabled(False)
-        self._scan_status.setText("Scanning...")
+        self._scan_status.setText(tr("device.scanning"))
         self._scan_thread = QThread(self)
         self._scan_worker = _ScanWorker()
         self._scan_worker.moveToThread(self._scan_thread)
@@ -305,13 +394,13 @@ class MainWindow(QMainWindow):
 
     def _on_scan_failed(self, error: str) -> None:
         self._scan_button.setEnabled(True)
-        self._scan_status.setText(f"Scan failed: {error}")
+        self._scan_status.setText(tr("device.scan_failed", error=error))
 
     def _on_scan_finished(self, devices: list[object]) -> None:
         self._scan_button.setEnabled(True)
         rows = vm.format_scan_rows(devices)  # type: ignore[arg-type]
         self._scan_rows = rows
-        self._scan_status.setText(f"Found {len(rows)} device(s), strongest signal first.")
+        self._scan_status.setText(tr("device.scan_found", count=len(rows)))
         self._scan_table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             self._scan_table.setItem(i, 0, QTableWidgetItem(vm.format_rssi(row.rssi)))
@@ -346,13 +435,13 @@ class MainWindow(QMainWindow):
         radius_row = QHBoxLayout()
         radius_row.addWidget(self._radius_slider)
         radius_row.addWidget(self._radius_value_label)
-        form.addRow("Radius", radius_row)
+        form.addRow(tr("settings.radius_label"), radius_row)
 
         self._grace_spin = QDoubleSpinBox()
         self._grace_spin.setRange(3.0, 60.0)
         self._grace_spin.setValue(self._settings.grace_seconds)
         self._grace_spin.setSuffix(" s")
-        form.addRow("Grace period", self._grace_spin)
+        form.addRow(tr("settings.grace_label"), self._grace_spin)
 
         self._strategy_combo = QComboBox()
         strategy_values = [s.value for s in IMPLEMENTED_STRATEGIES] or [Strategy.ADV_SCAN.value]
@@ -364,24 +453,36 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self._strategy_combo.setCurrentIndex(index)
         self._strategy_combo.currentTextChanged.connect(self._on_strategy_changed)
-        form.addRow("Strategy", self._strategy_combo)
+        form.addRow(tr("settings.strategy_label"), self._strategy_combo)
 
         self._max_locks_spin = QSpinBox()
         self._max_locks_spin.setRange(1, 100)
         self._max_locks_spin.setValue(self._settings.breaker_max_locks)
-        form.addRow("Guardrail: max locks", self._max_locks_spin)
+        form.addRow(tr("settings.guardrail_max_locks_label"), self._max_locks_spin)
 
         self._window_spin = QDoubleSpinBox()
         self._window_spin.setRange(1.0, 3600.0)
         self._window_spin.setValue(self._settings.breaker_window_seconds)
         self._window_spin.setSuffix(" s")
-        form.addRow("Guardrail: window", self._window_spin)
+        form.addRow(tr("settings.guardrail_window_label"), self._window_spin)
 
         self._cooldown_spin = QDoubleSpinBox()
         self._cooldown_spin.setRange(1.0, 3600.0)
         self._cooldown_spin.setValue(self._settings.breaker_cooldown_seconds)
         self._cooldown_spin.setSuffix(" s")
-        form.addRow("Guardrail: cooldown", self._cooldown_spin)
+        form.addRow(tr("settings.guardrail_cooldown_label"), self._cooldown_spin)
+
+        self._language_combo = QComboBox()
+        current_language = getattr(self._settings, "language", "auto")
+        self._language_codes = ["auto", *available_languages()]
+        for code in self._language_codes:
+            label = tr("settings.language_auto") if code == "auto" else code
+            self._language_combo.addItem(label, userData=code)
+        index = self._language_combo.findData(current_language)
+        if index < 0:
+            index = 0
+        self._language_combo.setCurrentIndex(index)
+        form.addRow(tr("settings.language_label"), self._language_combo)
 
         layout.addLayout(form)
 
@@ -395,7 +496,7 @@ class MainWindow(QMainWindow):
         self._settings_status.setWordWrap(True)
         layout.addWidget(self._settings_status)
 
-        save_button = QPushButton("Save")
+        save_button = QPushButton(tr("settings.save_button"))
         save_button.clicked.connect(self._on_save_settings)
         layout.addWidget(save_button)
         layout.addStretch(1)
@@ -420,13 +521,27 @@ class MainWindow(QMainWindow):
         self._settings.breaker_max_locks = self._max_locks_spin.value()
         self._settings.breaker_window_seconds = self._window_spin.value()
         self._settings.breaker_cooldown_seconds = self._cooldown_spin.value()
+        new_language = self._language_combo.currentData()
+        language_changed = new_language != getattr(self._settings, "language", "auto")
+        # settings.py is a READ-ONLY hotspot; until the `language` field lands
+        # there (see PATCH-NOTES.md), this setattr is forward-compatible: it
+        # is a no-op on today's Settings (the attribute is simply added back
+        # on, read defensively via getattr elsewhere) and becomes real,
+        # persisted state the moment the dataclass field exists.
+        self._settings.language = new_language  # type: ignore[attr-defined]
 
         result = vm.validate_settings_message(self._settings)
         if not result.ok:
-            self._settings_status.setText(f"Not saved: {result.message}")
+            self._settings_status.setText(tr("settings.not_saved", message=result.message))
             return
         self._settings.save()
-        self._settings_status.setText("Saved.")
+        if language_changed:
+            set_language(resolve_language(new_language))
+            self._settings_status.setText(tr("settings.saved_language_note"))
+        else:
+            self._settings_status.setText(tr("settings.saved"))
+        if self._monitor_thread is None:
+            self._refresh_state_icon(None)
 
     # ------------------------------------------------------------- MONITOR tab
 
@@ -434,30 +549,30 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        self._status_line = QLabel("stopped")
+        self._status_line = QLabel(tr("monitor.stopped"))
         layout.addWidget(self._status_line)
 
         buttons = QHBoxLayout()
-        self._dry_run_button = QPushButton("Start (dry-run)")
+        self._dry_run_button = QPushButton(tr("monitor.start_dry_run_button"))
         self._dry_run_button.clicked.connect(self._on_start_dry_run)
         buttons.addWidget(self._dry_run_button)
 
-        self._armed_button = QPushButton("Start (armed)")
+        self._armed_button = QPushButton(tr("monitor.start_armed_button"))
         self._armed_button.clicked.connect(self._on_start_armed)
         buttons.addWidget(self._armed_button)
 
-        self._stop_button = QPushButton("Stop")
+        self._stop_button = QPushButton(tr("monitor.stop_button"))
         self._stop_button.setEnabled(False)
         self._stop_button.clicked.connect(self._on_stop_monitor)
         buttons.addWidget(self._stop_button)
         layout.addLayout(buttons)
 
-        log_group = QGroupBox("Event log (tail)")
+        log_group = QGroupBox(tr("monitor.log_group"))
         log_layout = QVBoxLayout(log_group)
         self._log_view = QPlainTextEdit()
         self._log_view.setReadOnly(True)
         log_layout.addWidget(self._log_view)
-        refresh_button = QPushButton("Refresh log")
+        refresh_button = QPushButton(tr("monitor.refresh_log_button"))
         refresh_button.clicked.connect(self._refresh_log_view)
         log_layout.addWidget(refresh_button)
         layout.addWidget(log_group)
@@ -472,7 +587,7 @@ class MainWindow(QMainWindow):
             f"{r.timestamp}  {r.event}  " + "  ".join(f"{k}={v}" for k, v in r.detail.items())
             for r in records
         ]
-        self._log_view.setPlainText("\n".join(lines) if lines else "(no events recorded yet)")
+        self._log_view.setPlainText("\n".join(lines) if lines else tr("monitor.log_empty"))
 
     def _on_start_dry_run(self) -> None:
         self._start_monitor(locker=None)
@@ -480,9 +595,8 @@ class MainWindow(QMainWindow):
     def _on_start_armed(self) -> None:
         confirm = QMessageBox.question(
             self,
-            "Start armed monitoring",
-            "This will actually lock the screen when the trusted device leaves the "
-            "safety radius. Continue?",
+            tr("monitor.armed_confirm_title"),
+            tr("monitor.armed_confirm_text"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -490,19 +604,23 @@ class MainWindow(QMainWindow):
         try:
             locker = get_locker()
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Cannot start", f"No locker available: {exc}")
+            QMessageBox.critical(
+                self,
+                tr("monitor.cannot_start_title"),
+                tr("monitor.cannot_start_no_locker", error=exc),
+            )
             return
         self._start_monitor(locker=locker)
 
     def _start_monitor(self, locker: Locker | None) -> None:
         result = vm.validate_settings_message(self._settings)
         if not result.ok:
-            QMessageBox.warning(self, "Cannot start", result.message)
+            QMessageBox.warning(self, tr("monitor.cannot_start_title"), result.message)
             return
         self._dry_run_button.setEnabled(False)
         self._armed_button.setEnabled(False)
         self._stop_button.setEnabled(True)
-        self._status_line.setText("starting...")
+        self._status_line.setText(tr("monitor.starting"))
 
         self._monitor_thread = QThread(self)
         self._monitor_worker = _MonitorWorker(self._settings, locker)
@@ -515,18 +633,22 @@ class MainWindow(QMainWindow):
     def _on_tick(self, tick: object) -> None:
         assert isinstance(tick, Tick)
         self._status_line.setText(vm.format_status(tick))
+        self._refresh_state_icon(tick)
 
     def _on_monitor_stopped(self, error: str) -> None:
         self._dry_run_button.setEnabled(True)
         self._armed_button.setEnabled(True)
         self._stop_button.setEnabled(False)
-        self._status_line.setText(f"stopped: {error}" if error else "stopped")
+        self._status_line.setText(
+            tr("monitor.stopped_with_error", error=error) if error else tr("monitor.stopped")
+        )
         if self._monitor_thread is not None:
             self._monitor_thread.quit()
             self._monitor_thread.wait()
         self._monitor_thread = None
         self._monitor_worker = None
         self._refresh_log_view()
+        self._refresh_state_icon(None)
 
     def _on_stop_monitor(self) -> None:
         if self._monitor_worker is not None:
@@ -537,27 +659,28 @@ class MainWindow(QMainWindow):
     def _build_calibration_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(
-            QLabel(
-                "Calibrate distance estimation for the trusted device by sampling RSSI "
-                "at two known distances."
-            )
-        )
-        start_button = QPushButton("Start calibration wizard")
+        layout.addWidget(QLabel(tr("calibration.tab_intro")))
+        start_button = QPushButton(tr("calibration.start_button"))
         start_button.clicked.connect(self._on_start_calibration)
         layout.addWidget(start_button)
-        self._calibration_status = QLabel(
-            f"Current: rssi_at_1m={self._settings.rssi_at_1m:g} dBm, "
-            f"n={self._settings.path_loss_exponent:g}"
-        )
+        self._calibration_status = QLabel(self._calibration_status_text())
         self._calibration_status.setWordWrap(True)
         layout.addWidget(self._calibration_status)
         layout.addStretch(1)
         return widget
 
+    def _calibration_status_text(self) -> str:
+        return tr(
+            "calibration.current_status",
+            rssi=self._settings.rssi_at_1m,
+            exponent=self._settings.path_loss_exponent,
+        )
+
     def _on_start_calibration(self) -> None:
         if not self._settings.device_address:
-            QMessageBox.warning(self, "No device", "Pick a trusted device on the Device tab first.")
+            QMessageBox.warning(
+                self, tr("calibration.no_device_title"), tr("calibration.no_device_text")
+            )
             return
         wizard = CalibrationWizard(self._settings, self)
         if wizard.exec() == QDialog.DialogCode.Accepted and wizard.outcome is not None:
@@ -568,10 +691,7 @@ class MainWindow(QMainWindow):
                     self._settings.path_loss_exponent
                 )
                 self._settings.save()
-                self._calibration_status.setText(
-                    f"Current: rssi_at_1m={self._settings.rssi_at_1m:g} dBm, "
-                    f"n={self._settings.path_loss_exponent:g}"
-                )
+                self._calibration_status.setText(self._calibration_status_text())
 
 
 def _load_or_default_settings() -> Settings:

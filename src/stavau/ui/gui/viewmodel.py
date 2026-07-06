@@ -10,13 +10,28 @@ core/monitor.py, core/distance.py, core/calibrate.py, core/deviceid.py).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from stavau.config.settings import ConfigError, Settings
 from stavau.core.monitor import DiscoveredDevice, NearbyDevice
 from stavau.core.presence import PresenceState
 from stavau.core.session import Tick
+from stavau.i18n import tr
 
 # ---------------------------------------------------------------- status text
+
+
+# A short, translated label for the state, used in the status line.
+_STATE_KEYS: dict[PresenceState, str] = {
+    PresenceState.NEAR: "status.state.near",
+    PresenceState.LEAVING: "status.state.leaving",
+    PresenceState.AWAY: "status.state.away",
+    PresenceState.RETURNING: "status.state.returning",
+}
+
+
+def state_label(state: PresenceState) -> str:
+    return tr(_STATE_KEYS[state])
 
 
 def format_status(tick: Tick) -> str:
@@ -26,25 +41,14 @@ def format_status(tick: Tick) -> str:
     then radio-off, then no-signal, then the normal state/distance/rssi line.
     """
     if tick.breaker_paused:
-        return f"guardrail paused - {tick.breaker_seconds_remaining:.0f} s left"
+        return tr("status.breaker_paused", seconds=tick.breaker_seconds_remaining)
+    state = state_label(tick.state)
     if tick.rssi is None and tick.radio_off:
-        return f"{tick.state.value} - BLUETOOTH OFF"
+        return tr("status.bluetooth_off", state=state)
     if tick.rssi is None:
-        return f"{tick.state.value} - no signal"
-    return f"{tick.state.value} - {tick.distance:.1f} m ({tick.rssi:.0f} dBm)"
-
-
-# A short label for the state, used to colour or badge the status line.
-_STATE_LABELS: dict[PresenceState, str] = {
-    PresenceState.NEAR: "near",
-    PresenceState.LEAVING: "leaving",
-    PresenceState.AWAY: "away",
-    PresenceState.RETURNING: "returning",
-}
-
-
-def state_label(state: PresenceState) -> str:
-    return _STATE_LABELS[state]
+        return tr("status.no_signal", state=state)
+    assert tick.distance is not None
+    return tr("status.with_distance", state=state, distance=tick.distance, rssi=tick.rssi)
 
 
 # ---------------------------------------------------------------- strategy caveat
@@ -60,15 +64,8 @@ def strategy_caveat(strategy: str, platform: str) -> str:
     if strategy != "classic_link":
         return ""
     if platform == "win32":
-        return (
-            "classic_link on Windows reports reachability only (connected / out of "
-            "range), not a metric distance. The radius slider has no effect here; "
-            "the lock fires on disconnect, similar to Windows Dynamic Lock."
-        )
-    return (
-        "classic_link reports real RSSI on this platform, so the radius slider "
-        "behaves as a metric threshold, same as adv_scan."
-    )
+        return tr("caveat.classic_link_windows")
+    return tr("caveat.classic_link_other")
 
 
 # ---------------------------------------------------------------- settings validation
@@ -83,13 +80,16 @@ class ValidationResult:
 def validate_settings_message(settings: Settings) -> ValidationResult:
     """Run Settings.validate() and translate a ConfigError into a UI message.
 
-    Never raises: callers can always show `result.message` directly.
+    Never raises: callers can always show `result.message` directly. The
+    failure message is Settings.validate()'s own ConfigError text (defined in
+    the settings hotspot, English-only for now); only the success message is
+    translated here.
     """
     try:
         settings.validate()
     except ConfigError as exc:
         return ValidationResult(ok=False, message=str(exc))
-    return ValidationResult(ok=True, message="Settings are valid.")
+    return ValidationResult(ok=True, message=tr("settings.valid_message"))
 
 
 def clamp_radius(value: float) -> float:
@@ -156,10 +156,7 @@ def summarize_station(distance_m: float, samples: list[float]) -> CalibrationSta
             sample_count=len(samples),
             median_rssi=None,
             ok=False,
-            message=(
-                f"Only {len(samples)} advertisement(s) received at {distance_m:g} m - "
-                "device not advertising or out of range. This station will be skipped."
-            ),
+            message=tr("calibration.station_skipped", count=len(samples), distance=distance_m),
         )
     median = float(statistics.median(samples))
     return CalibrationStationResult(
@@ -167,7 +164,9 @@ def summarize_station(distance_m: float, samples: list[float]) -> CalibrationSta
         sample_count=len(samples),
         median_rssi=median,
         ok=True,
-        message=f"Median RSSI at {distance_m:g} m: {median:.0f} dBm ({len(samples)} samples).",
+        message=tr(
+            "calibration.station_ok", distance=distance_m, median=median, count=len(samples)
+        ),
     )
 
 
@@ -194,8 +193,7 @@ def summarize_calibration_fit(
     if not usable:
         return CalibrationOutcome(
             ok=False,
-            message="Calibration failed: no usable samples were collected. Move closer to "
-            "the device or check that Bluetooth is on, then try again.",
+            message=tr("calibration.fit_no_samples"),
         )
     try:
         model = fit_model(usable)
@@ -204,15 +202,66 @@ def summarize_calibration_fit(
             try:
                 model = fit_model(usable[:1])
             except ValueError:
-                return CalibrationOutcome(ok=False, message=f"Calibration fit rejected: {exc}")
+                return CalibrationOutcome(
+                    ok=False, message=tr("calibration.fit_rejected", error=exc)
+                )
         else:
-            return CalibrationOutcome(ok=False, message=f"Calibration fit rejected: {exc}")
+            return CalibrationOutcome(ok=False, message=tr("calibration.fit_rejected", error=exc))
     return CalibrationOutcome(
         ok=True,
-        message=(
-            f"Calibrated: rssi_at_1m={model.rssi_at_1m:.1f} dBm, "
-            f"path loss exponent n={model.path_loss_exponent:.2f}"
+        message=tr(
+            "calibration.fit_ok",
+            rssi=model.rssi_at_1m,
+            exponent=model.path_loss_exponent,
         ),
         rssi_at_1m=model.rssi_at_1m,
         path_loss_exponent=model.path_loss_exponent,
     )
+
+
+# ---------------------------------------------------------------- icon color (taskbar + tray)
+
+# Distance-graded palette, shared by the GUI's window/tray icon. Kept as
+# plain RGB tuples (no Qt/PIL types) so this stays a pure, Qt-free function.
+ICON_BLUE: tuple[int, int, int] = (0, 120, 215)  # no trusted device configured yet
+ICON_GREY: tuple[int, int, int] = (128, 128, 128)  # device set, no signal / radio off
+ICON_GREEN: tuple[int, int, int] = (56, 176, 72)  # comfortably within radius
+ICON_YELLOW: tuple[int, int, int] = (230, 200, 0)  # inner band of the radius
+ICON_ORANGE: tuple[int, int, int] = (240, 140, 0)  # beyond radius, leaving/grace running
+ICON_RED: tuple[int, int, int] = (204, 62, 52)  # away: locked / fail-safe fired
+ICON_PAUSED: tuple[int, int, int] = (150, 90, 200)  # guardrail paused (purple, pause bars)
+
+IconToken = Literal["paused"]
+
+
+def icon_color(
+    tick_or_none: Tick | None, radius_m: float, has_device: bool
+) -> tuple[int, int, int] | IconToken:
+    """Pure decision function for the taskbar/tray icon colour.
+
+    Precedence (highest first), per the distance-graded scheme requested:
+    1. guardrail paused -> "paused" token (renderer draws purple + pause bars)
+    2. away state -> red (locked / fail-safe fired), regardless of distance
+    3. no trusted device configured -> blue
+    4. no signal (rssi is None, including the BLUETOOTH OFF case) -> grey
+    5. otherwise, distance vs. radius bands: green / yellow / orange
+
+    `tick_or_none=None` means "no monitor running": blue if no device is
+    configured yet, grey if one is configured but idle.
+    """
+    if tick_or_none is not None and tick_or_none.breaker_paused:
+        return "paused"
+    if tick_or_none is not None and tick_or_none.state is PresenceState.AWAY:
+        return ICON_RED
+    if not has_device:
+        return ICON_BLUE
+    if tick_or_none is None or tick_or_none.rssi is None:
+        return ICON_GREY
+    distance = tick_or_none.distance
+    if distance is None:
+        return ICON_GREY
+    if distance <= 0.6 * radius_m:
+        return ICON_GREEN
+    if distance <= radius_m:
+        return ICON_YELLOW
+    return ICON_ORANGE
