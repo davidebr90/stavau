@@ -40,11 +40,24 @@ class FakeSource:
         self.stopped = True
 
 
+class RadioProbeStub:
+    """Deterministic stand-in for radiostate.radio_available with a call counter."""
+
+    def __init__(self, result: bool | None = None) -> None:
+        self.result = result
+        self.calls = 0
+
+    async def __call__(self) -> bool | None:
+        self.calls += 1
+        return self.result
+
+
 def run_session(
     tmp_path: Path,
     rssi_script: list[float | None],
     monkeypatch: pytest.MonkeyPatch,
     observer: LockStateObserver | None = None,
+    radio_probe: RadioProbeStub | None = None,
     **overrides: object,
 ) -> tuple[FakeLocker, list[Tick]]:
     settings = Settings(
@@ -67,6 +80,11 @@ def run_session(
         settings, locker, EventLog(tmp_path / "events.jsonl"), observer=observer
     )
     session._source = FakeSource()  # type: ignore[assignment]
+
+    # Keep the radio probe deterministic and hardware-free in every test.
+    from stavau.core import session as session_mod
+
+    monkeypatch.setattr(session_mod, "radio_available", radio_probe or RadioProbeStub(None))
 
     # Feed one scripted RSSI sample at the start of each tick, right before the
     # session reads the smoothed value.
@@ -110,6 +128,64 @@ class TestSessionLocking:
         # Near, then the device vanishes (None) long enough to go stale -> lock.
         script: list[float | None] = [-50.0, -50.0] + [None] * 20
         locker, ticks = run_session(tmp_path, script, monkeypatch)
+        assert locker.lock_calls == 1
+
+
+class TestRadioOff:
+    def _events(self, tmp_path: Path) -> list[str]:
+        return [r.event for r in EventLog(tmp_path / "events.jsonl").tail(200)]
+
+    def test_radio_off_false_while_signal_present(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Even a probe that would say "off" is irrelevant while rssi flows.
+        probe = RadioProbeStub(False)
+        _locker, ticks = run_session(tmp_path, [-50.0] * 8, monkeypatch, radio_probe=probe)
+        assert all(not t.radio_off for t in ticks)
+        assert probe.calls == 0  # never probed while signal is healthy
+
+    def test_radio_off_true_after_stale_and_probe_false(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script: list[float | None] = [-50.0, -50.0] + [None] * 20
+        _locker, ticks = run_session(
+            tmp_path, script, monkeypatch, radio_probe=RadioProbeStub(False)
+        )
+        assert any(t.radio_off for t in ticks)
+        events = self._events(tmp_path)
+        assert events.count("radio_off") == 1  # single transition log, no spam
+        assert "radio_on" not in events
+
+    def test_radio_recovery_logs_radio_on_once(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script: list[float | None] = [-50.0] * 2 + [None] * 18 + [-50.0] * 4
+        _locker, _ticks = run_session(
+            tmp_path, script, monkeypatch, radio_probe=RadioProbeStub(False)
+        )
+        events = self._events(tmp_path)
+        assert events.count("radio_off") == 1
+        assert events.count("radio_on") == 1
+
+    def test_probe_is_throttled_while_stale(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        probe = RadioProbeStub(False)
+        # The tracker goes stale 15 virtual seconds after the last sample, so a
+        # long None tail yields ~15 stale ticks; unthrottled, that would be ~15
+        # probe calls, throttled (first stale tick, then every 6th) it is ~3.
+        script: list[float | None] = [-50.0] + [None] * 30
+        run_session(tmp_path, script, monkeypatch, radio_probe=probe)
+        assert 2 <= probe.calls <= 4
+
+    def test_radio_off_never_prevents_the_fail_safe_lock(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # I1: radio-off is explanation only — the staleness lock still fires.
+        script: list[float | None] = [-50.0, -50.0] + [None] * 20
+        locker, _ticks = run_session(
+            tmp_path, script, monkeypatch, radio_probe=RadioProbeStub(False)
+        )
         assert locker.lock_calls == 1
 
 

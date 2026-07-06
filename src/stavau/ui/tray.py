@@ -142,6 +142,8 @@ class TrayApp:
             self._icon.icon = _padlock_image(color, paused=tick.breaker_paused)
         if tick.breaker_paused:
             self._status = f"guardrail paused - {tick.breaker_seconds_remaining:.0f} s left"
+        elif tick.rssi is None and tick.radio_off:
+            self._status = f"{tick.state.value} - BLUETOOTH OFF"
         elif tick.rssi is None:
             self._status = f"{tick.state.value} - no signal"
         else:

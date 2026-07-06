@@ -30,6 +30,7 @@ from stavau.core.distance import CalibrationModel
 from stavau.core.events import EventLog
 from stavau.core.monitor import NearbyCache, RssiTracker
 from stavau.core.presence import PresenceConfig, PresenceMachine, PresenceState
+from stavau.core.radiostate import radio_available
 from stavau.core.strategy import ProximitySource, build_source
 from stavau.platform.base import Locker, LockError
 from stavau.platform.lockstate import LockStateObserver, get_lock_state_observer
@@ -53,6 +54,7 @@ class Tick:
     breaker_paused: bool
     breaker_seconds_remaining: float
     screen_locked: bool | None
+    radio_off: bool
 
 
 class MonitorSession:
@@ -87,6 +89,9 @@ class MonitorSession:
                 cooldown_seconds=settings.breaker_cooldown_seconds,
             )
         )
+        self._radio_state: bool | None = None
+        self._radio_off_reported = False
+        self._ticks_since_radio_check = 0
 
     @property
     def source(self) -> ProximitySource:
@@ -144,6 +149,28 @@ class MonitorSession:
                     last_known_lock_state = screen_locked
                 rssi = self._tracker.smoothed(now)
                 distance = self._model.distance_m(rssi) if rssi is not None else None
+
+                # Refresh the radio-off reading at most once every 5 ticks: the
+                # probe shells out (Linux) or calls into WinRT (Windows), so it
+                # must stay cheap relative to the once-a-second tick cadence.
+                if rssi is None:
+                    if self._ticks_since_radio_check >= 5 or self._radio_state is None:
+                        self._radio_state = await radio_available()
+                        self._ticks_since_radio_check = 0
+                    else:
+                        self._ticks_since_radio_check += 1
+                else:
+                    self._radio_state = None
+                    self._ticks_since_radio_check = 0
+
+                radio_off = rssi is None and self._radio_state is False
+                if radio_off and not self._radio_off_reported:
+                    self._log.append("radio_off")
+                    self._radio_off_reported = True
+                elif not radio_off and self._radio_off_reported:
+                    self._log.append("radio_on")
+                    self._radio_off_reported = False
+
                 must_lock = self._machine.update(distance, now)
 
                 if self._machine.state is not last_state:
@@ -204,6 +231,7 @@ class MonitorSession:
                             breaker_paused=paused,
                             breaker_seconds_remaining=self._breaker.seconds_remaining(now),
                             screen_locked=screen_locked,
+                            radio_off=radio_off,
                         )
                     )
 

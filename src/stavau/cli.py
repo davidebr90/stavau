@@ -336,7 +336,12 @@ class _ConsolePrinter:
         self._was_paused = tick.breaker_paused
         self._prev_state = tick.state
 
-        rssi_text = f"{tick.rssi:6.1f} dBm" if tick.rssi is not None else " no signal"
+        if tick.rssi is not None:
+            rssi_text = f"{tick.rssi:6.1f} dBm"
+        elif tick.radio_off:
+            rssi_text = "BLUETOOTH OFF"
+        else:
+            rssi_text = " no signal"
         distance_text = f"{tick.distance:5.2f} m" if tick.distance is not None else "    ? m"
         pause_text = " [PAUSED]" if tick.breaker_paused else ""
         # flush: status must reach logs/pipes in real time, not on buffer boundaries
