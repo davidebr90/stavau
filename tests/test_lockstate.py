@@ -138,6 +138,17 @@ class TestUnknownStatePassthrough:
         locker, _ticks = run_session(tmp_path, WALK_AWAY, monkeypatch, observer=observer)
         assert locker.lock_calls == 1
 
+    def test_truthy_non_true_state_does_not_suppress_lock(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The skip condition must be `is True`, not truthiness: a contract-
+        # violating observer returning 1 (truthy, not the bool True) must NOT
+        # suppress locking. Guards against a future backend breaking I1.
+        observer = FakeLockObserver([1])  # type: ignore[list-item]
+        locker, _ticks = run_session(tmp_path, WALK_AWAY, monkeypatch, observer=observer)
+        assert locker.lock_calls == 1
+        assert "lock_skipped_already_locked" not in logged_events(tmp_path)
+
 
 class TestTransitionEvents:
     def test_locked_then_unlocked_transitions_are_logged(
