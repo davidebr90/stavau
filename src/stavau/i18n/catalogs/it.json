@@ -34,6 +34,7 @@
   "device.kind.wearable": "Indossabile",
   "device.kind.generic": "Dispositivo BLE",
   "device.kind.unknown": "Sconosciuto",
+  "device.kind.tv": "TV",
 
   "settings.radius_label": "Raggio",
   "settings.grace_label": "Periodo di tolleranza",

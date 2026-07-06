@@ -34,6 +34,7 @@
   "device.kind.wearable": "Wearable",
   "device.kind.generic": "BLE device",
   "device.kind.unknown": "Unknown",
+  "device.kind.tv": "TV",
 
   "settings.radius_label": "Radius",
   "settings.grace_label": "Grace period",

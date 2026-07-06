@@ -256,6 +256,19 @@ def test_device_kind_label_uses_distinct_emoji_per_vendor() -> None:
     assert apple[0] != android[0]
 
 
+def test_device_kind_label_tv_name_wins_over_vendor() -> None:
+    from stavau.core.deviceid import SAMSUNG_COMPANY_ID
+
+    set_language("en")
+    # A Samsung smart TV advertises as Android, but its name says TV -> TV.
+    label = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "[TV] Samsung BU8070 75 TV")
+    assert "TV" in label
+    assert "\U0001f4fa" in label  # television glyph
+    assert "Android" not in label
+    # 'tv' inside another word must not trigger the TV label.
+    assert "TV" not in vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "octave-speaker")
+
+
 def test_format_device_name_maps_unnamed() -> None:
     set_language("en")
     assert vm.format_device_name("<unnamed>") == "(no name)"

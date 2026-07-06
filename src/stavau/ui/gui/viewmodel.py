@@ -9,6 +9,7 @@ core/monitor.py, core/distance.py, core/calibrate.py, core/deviceid.py).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -133,13 +134,26 @@ _KIND_KEYS = {
     "generic": "device.kind.generic",
     "unknown": "device.kind.unknown",
 }
+_TV_RE = re.compile(r"\bTV\b|TELEVIS", re.IGNORECASE)
+
+
+def _looks_like_tv(name: str) -> bool:
+    """A device whose advertised name says 'TV' (e.g. '[TV] Samsung ... 75 TV')
+    or 'television/televisore/téléviseur' is a TV, whatever its vendor id says."""
+    return bool(name) and _TV_RE.search(name) is not None
 
 
 def device_kind_label(company_ids: frozenset[int], name: str) -> str:
-    """Human-friendly device type ('📱 Apple', '⌚ Wearable', ...) from advertised
-    company IDs, using the same classifier the setup wizard uses."""
+    """Human-friendly device type ('🍎 Apple', '📺 TV', '⌚ Wearable', ...).
+
+    A name that says 'TV' wins over the vendor id (a smart TV advertises as
+    Android but the user thinks of it as a TV); otherwise classify by the
+    advertised company ids, the same way the setup wizard does.
+    """
     from stavau.core.deviceid import Observation, classify
 
+    if _looks_like_tv(name):
+        return f"\U0001f4fa {tr('device.kind.tv')}"  # television
     kind = classify(
         Observation(company_ids=company_ids, name=name or "", advertisement_count=1)
     ).kind
