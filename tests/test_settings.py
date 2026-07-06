@@ -63,3 +63,26 @@ class TestValidation:
 
     def test_defaults_with_device_are_valid(self) -> None:
         Settings(device_address="AA:BB:CC:DD:EE:FF").validate()
+
+    def test_auto_unlock_requires_acknowledgement(self) -> None:
+        s = Settings(device_address="AA:BB:CC:DD:EE:FF", auto_unlock=True, association="paired")
+        with pytest.raises(ConfigError, match="acknowledgement"):
+            s.validate()
+
+    def test_auto_unlock_requires_paired_device(self) -> None:
+        s = Settings(
+            device_address="AA:BB:CC:DD:EE:FF",
+            auto_unlock=True,
+            auto_unlock_ack=True,
+            association="pairing-less",
+        )
+        with pytest.raises(ConfigError, match="paired"):
+            s.validate()
+
+    def test_auto_unlock_acknowledged_and_paired_is_valid(self) -> None:
+        Settings(
+            device_address="AA:BB:CC:DD:EE:FF",
+            auto_unlock=True,
+            auto_unlock_ack=True,
+            association="paired",
+        ).validate()

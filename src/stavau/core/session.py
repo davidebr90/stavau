@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from stavau.config.settings import Settings
+from stavau.core.autounlock import AutoUnlockConfig, AutoUnlockPolicy
 from stavau.core.breaker import BreakerConfig, LockCircuitBreaker
 from stavau.core.distance import CalibrationModel
 from stavau.core.events import EventLog
@@ -34,6 +35,7 @@ from stavau.core.radiostate import radio_available
 from stavau.core.strategy import ProximitySource, build_source
 from stavau.platform.base import Locker, LockError
 from stavau.platform.lockstate import LockStateObserver, get_lock_state_observer
+from stavau.platform.unlock import Unlocker, UnlockError, get_unlocker
 
 _LOCK_RETRY_SECONDS = 5.0
 
@@ -101,6 +103,22 @@ class MonitorSession:
         self._radio_state: bool | None = None
         self._radio_off_reported = False
         self._ticks_since_radio_check = 0
+        # Auto-unlock (advanced, off by default). Enabled only when the config
+        # opts in AND the OS exposes a safe unlock (Linux). On an unsupported
+        # platform the policy stays None and the feature refuses to run.
+        self._unlocker: Unlocker | None = None
+        self._autounlock: AutoUnlockPolicy | None = None
+        if settings.auto_unlock and locker is not None:
+            unlocker = get_unlocker()
+            if unlocker is not None:
+                self._unlocker = unlocker
+                self._autounlock = AutoUnlockPolicy(
+                    AutoUnlockConfig(
+                        enabled=True,
+                        strict_ratio=settings.auto_unlock_strict_ratio,
+                        dwell_seconds=settings.auto_unlock_dwell_seconds,
+                    )
+                )
 
     @property
     def source(self) -> ProximitySource:
@@ -141,7 +159,12 @@ class MonitorSession:
             device=self._settings.device_alias,
             dry_run=self._locker is None,
             strategy=self._effective_strategy,
+            auto_unlock=self._autounlock is not None,
         )
+        if self._settings.auto_unlock and self._autounlock is None and self._locker is not None:
+            # Opted in but the platform has no safe unlock API: refuse loudly
+            # rather than silently pretending the feature is on.
+            self._log.append("auto_unlock_unsupported_platform")
         await self._source.start()
         started = time.monotonic()
         last_state = self._machine.state
@@ -156,6 +179,11 @@ class MonitorSession:
                     if last_known_lock_state is not None and screen_locked != last_known_lock_state:
                         self._log.append("session_locked" if screen_locked else "session_unlocked")
                     last_known_lock_state = screen_locked
+                if self._autounlock is not None:
+                    # Feed the observed lock state so the policy can distinguish
+                    # stavau's own lock from a manual one (never auto-unlock the
+                    # latter — threat-model T9).
+                    self._autounlock.note_lock_observed(screen_locked)
                 rssi = self._tracker.smoothed(now)
                 distance = self._model.distance_m(rssi) if rssi is not None else None
 
@@ -220,6 +248,10 @@ class MonitorSession:
                         breaker_announced = False
                         if self._trigger_lock():
                             lock_pending_since = None
+                            if self._autounlock is not None:
+                                # This lock is ours: arm auto-unlock for it (and
+                                # only it) once the observer confirms it locked.
+                                self._autounlock.note_stavau_lock()
                             if self._breaker.register_lock(now):
                                 self._log.append(
                                     "breaker_tripped",
@@ -228,6 +260,15 @@ class MonitorSession:
                                 )
                         else:
                             lock_pending_since = now
+
+                if (
+                    self._autounlock is not None
+                    and self._unlocker is not None
+                    and screen_locked is True
+                ):
+                    is_paired = self._settings.association == "paired"
+                    if self._autounlock.decide(distance, self._settings.radius_m, is_paired, now):
+                        self._try_auto_unlock()
 
                 if on_tick is not None:
                     paused = self._breaker.is_paused(now)
@@ -273,6 +314,16 @@ class MonitorSession:
             return None
         self._observer_error_logged = False
         return state
+
+    def _try_auto_unlock(self) -> None:
+        if self._unlocker is None:  # pragma: no cover — guarded by the caller
+            return
+        try:
+            self._unlocker.unlock()
+        except UnlockError as exc:
+            self._log.append("auto_unlock_failed", error=str(exc))
+            return
+        self._log.append("auto_unlock_triggered")
 
     def _trigger_lock(self) -> bool:
         if self._locker is None:

@@ -48,6 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
         "associate pairing-less via advertisement scanning",
     )
     p_setup.add_argument(
+        "--enable-auto-unlock",
+        action="store_true",
+        help="ADVANCED: auto-unlock on return (Linux only; requires a paired device "
+        "and --i-understand-the-risk). Off by default; see docs/threat-model.md T9",
+    )
+    p_setup.add_argument(
+        "--i-understand-the-risk",
+        action="store_true",
+        help="acknowledge the auto-unlock risk (relay attacks can unlock your screen)",
+    )
+    p_setup.add_argument(
         "--strategy",
         choices=["auto", "adv_scan", "classic_link", "adv_monitor", "gatt_link"],
         default="auto",
@@ -152,6 +163,22 @@ def cmd_setup(args: argparse.Namespace) -> int:
         settings.radius_m = args.radius
 
     _identify_and_associate(settings, pair=args.pair, forced_strategy=args.strategy)
+
+    if args.enable_auto_unlock:
+        settings.auto_unlock = True
+        settings.auto_unlock_ack = args.i_understand_the_risk
+        print(
+            "\n!!! AUTO-UNLOCK is an advanced convenience with real risk: a relay "
+            "attack that makes your device appear near can unlock your screen.\n"
+            "It is Linux-only, requires a paired (bonded) device, and never unlocks "
+            "a screen you locked manually. See docs/threat-model.md (T9)."
+        )
+        if not args.i_understand_the_risk:
+            print(
+                "Refusing to enable auto-unlock without --i-understand-the-risk.",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.skip_calibration:
         print(

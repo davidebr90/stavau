@@ -43,6 +43,11 @@ class Settings:
     # UI language: "auto" resolves to the OS language when a catalog exists,
     # falling back to English (see stavau.i18n.resolve_language).
     language: str = "auto"
+    # Auto-unlock (advanced, off by default; see core.autounlock + threat-model T9).
+    auto_unlock: bool = False
+    auto_unlock_ack: bool = False  # explicit risk acknowledgement, required to enable
+    auto_unlock_strict_ratio: float = 0.5  # must be within radius*ratio (stricter than lock)
+    auto_unlock_dwell_seconds: float = 5.0  # continuously, before unlocking (anti-relay)
     radius_m: float = 3.0
     grace_seconds: float = 10.0
     return_seconds: float = 3.0
@@ -67,6 +72,21 @@ class Settings:
             raise ConfigError("breaker_max_locks must be at least 1")
         if self.breaker_window_seconds <= 0 or self.breaker_cooldown_seconds <= 0:
             raise ConfigError("breaker window/cooldown seconds must be positive")
+        if self.auto_unlock:
+            # Auto-unlock is an explicit, acknowledged, bonded-only opt-in.
+            if not self.auto_unlock_ack:
+                raise ConfigError(
+                    "auto_unlock requires an explicit risk acknowledgement "
+                    "(re-run setup with --enable-auto-unlock --i-understand-the-risk)"
+                )
+            if self.association != "paired":
+                raise ConfigError(
+                    "auto_unlock requires a paired (bonded) device — run 'stavau pair' first"
+                )
+            if not 0.0 < self.auto_unlock_strict_ratio <= 1.0:
+                raise ConfigError("auto_unlock_strict_ratio must be in (0, 1]")
+            if self.auto_unlock_dwell_seconds < 0:
+                raise ConfigError("auto_unlock_dwell_seconds must be non-negative")
 
     def save(self, path: Path | None = None) -> Path:
         target = path or config_path()

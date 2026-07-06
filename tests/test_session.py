@@ -189,6 +189,124 @@ class TestRadioOff:
         assert locker.lock_calls == 1
 
 
+class _Screen:
+    """A shared lock flag linking the fake locker, observer and unlocker."""
+
+    def __init__(self, locked: bool = False) -> None:
+        self.locked = locked
+
+
+class _LinkedLocker:
+    name = "fake"
+
+    def __init__(self, screen: _Screen) -> None:
+        self._screen = screen
+        self.lock_calls = 0
+
+    def lock(self) -> None:
+        self.lock_calls += 1
+        self._screen.locked = True
+
+
+class _LinkedObserver:
+    name = "fake-observer"
+
+    def __init__(self, screen: _Screen) -> None:
+        self._screen = screen
+
+    def current(self) -> bool | None:
+        return self._screen.locked
+
+    def subscribe(self, cb) -> None:  # noqa: ANN001
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _LinkedUnlocker:
+    name = "fake-unlocker"
+
+    def __init__(self, screen: _Screen) -> None:
+        self._screen = screen
+        self.calls = 0
+
+    def unlock(self) -> None:
+        self.calls += 1
+        self._screen.locked = False
+
+
+def _drive_autounlock(
+    tmp_path: Path,
+    rssi_script: list[float | None],
+    monkeypatch: pytest.MonkeyPatch,
+    screen: _Screen,
+) -> tuple[_LinkedUnlocker, EventLog]:
+    from stavau.core import session as session_mod
+
+    settings = Settings(
+        device_address="AA:BB:CC:DD:EE:FF",
+        device_alias="test",
+        radius_m=3.0,
+        grace_seconds=3.0,
+        return_seconds=2.0,
+        smoothing_window=1,
+        rssi_at_1m=-59.0,
+        path_loss_exponent=2.0,
+        association="paired",
+        auto_unlock=True,
+        auto_unlock_ack=True,
+        auto_unlock_strict_ratio=0.5,
+        auto_unlock_dwell_seconds=0.0,
+    )
+    unlocker = _LinkedUnlocker(screen)
+    monkeypatch.setattr(session_mod, "get_unlocker", lambda: unlocker)
+    monkeypatch.setattr(session_mod, "radio_available", RadioProbeStub(None))
+
+    log = EventLog(tmp_path / "events.jsonl")
+    session = MonitorSession(settings, _LinkedLocker(screen), log, observer=_LinkedObserver(screen))
+    session._source = FakeSource()  # type: ignore[assignment]
+
+    real_smoothed = session._tracker.smoothed
+    cursor = [0]
+
+    def feed_then_read(now: float) -> float | None:
+        if cursor[0] < len(rssi_script):
+            value = rssi_script[cursor[0]]
+            cursor[0] += 1
+            if value is not None:
+                session._tracker.push(value, now)
+        return real_smoothed(now)
+
+    monkeypatch.setattr(session._tracker, "smoothed", feed_then_read)
+    asyncio.run(session.run(duration=float(len(rssi_script))))
+    return unlocker, log
+
+
+class TestAutoUnlock:
+    def test_unlocks_after_stavau_lock_on_return(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Near, walk away (stavau locks), then return close: auto-unlock fires.
+        script: list[float | None] = [-50.0] * 3 + [-90.0] * 8 + [-50.0] * 6
+        screen = _Screen(locked=False)
+        unlocker, log = _drive_autounlock(tmp_path, script, monkeypatch, screen)
+        assert unlocker.calls >= 1
+        events = [r.event for r in log.tail(200)]
+        assert "auto_unlock_triggered" in events
+
+    def test_never_unlocks_a_manual_lock(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The screen is locked by the user (foreign) and the device is right
+        # here the whole time. Auto-unlock must NEVER fire (threat-model T9).
+        script: list[float | None] = [-50.0] * 12
+        screen = _Screen(locked=True)  # pre-locked, not by stavau
+        unlocker, log = _drive_autounlock(tmp_path, script, monkeypatch, screen)
+        assert unlocker.calls == 0
+        assert "auto_unlock_triggered" not in [r.event for r in log.tail(200)]
+
+
 class TestGuardrail:
     def test_breaker_caps_locks_and_pauses(
         self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
