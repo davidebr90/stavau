@@ -89,9 +89,19 @@ module = [
   "objc.*",
   "AppKit",
   "AppKit.*",
+  "PySide6",
+  "PySide6.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# GUI shell: PySide6 is an optional [gui] extra, absent on CI, so Qt base
+# classes resolve to Any there. The pure presentation logic lives in
+# viewmodel.py, which stays fully strict; only the Qt-touching shell relaxes.
+module = ["stavau.ui.gui.app"]
+disallow_subclassing_any = false
+warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
