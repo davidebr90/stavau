@@ -36,7 +36,7 @@ def get_locker() -> Locker:
 
         return WindowsLocker()
     if sys.platform == "darwin":
-        raise UnsupportedPlatformError(
-            "macOS lock backend is planned for v0.2 — see the roadmap in README.md"
-        )
+        from stavau.platform.macos import MacLocker
+
+        return MacLocker()
     raise UnsupportedPlatformError(f"unsupported platform: {sys.platform}")

@@ -19,10 +19,9 @@ class TestGetLocker:
         monkeypatch.setattr(sys, "platform", "win32")
         assert get_locker().name == "windows"
 
-    def test_macos_not_yet_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_macos_platform_returns_mac_locker(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "platform", "darwin")
-        with pytest.raises(UnsupportedPlatformError, match="v0.2"):
-            get_locker()
+        assert get_locker().name == "macos"
 
     def test_unknown_platform_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "platform", "plan9")
