@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import sys
 
 from stavau import __version__
@@ -301,7 +302,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         flush=True,
     )
     printer = _ConsolePrinter(dry_run=locker is None)
-    asyncio.run(session.run(duration=args.duration, on_tick=printer))
+    try:
+        asyncio.run(session.run(duration=args.duration, on_tick=printer))
+    except Exception as exc:  # noqa: BLE001 - refuse loudly with an actionable reason (I1)
+        # Startup failure = clean refusal to start. Mid-run death while ARMED
+        # must fail safe: lock before exiting (I1), since protection is ending.
+        if locker is not None and printer.saw_ticks:
+            with contextlib.suppress(Exception):
+                locker.lock()
+                print("monitor died mid-run: screen locked as a precaution", flush=True)
+        hint = ""
+        with contextlib.suppress(Exception):
+            from stavau.core.radiostate import radio_available
+
+            if asyncio.run(radio_available()) is False:
+                hint = " (the Bluetooth radio is OFF - turn it on and retry)"
+        print(f"monitor aborted: {exc}{hint}", file=sys.stderr, flush=True)
+        return 3
     return 0
 
 
@@ -312,8 +329,10 @@ class _ConsolePrinter:
         self._dry_run = dry_run
         self._prev_state: PresenceState | None = None
         self._was_paused = False
+        self.saw_ticks = False
 
     def __call__(self, tick: Tick) -> None:
+        self.saw_ticks = True
         # A fresh transition into AWAY is when the lock fired this tick.
         if tick.state is PresenceState.AWAY and self._prev_state is not PresenceState.AWAY:
             if tick.breaker_paused:

@@ -169,10 +169,56 @@ class WindowsLockStateObserver:
             wtsapi32 = ctypes.windll.wtsapi32
             kernel32 = ctypes.windll.kernel32
 
+            # Explicit prototypes: without them ctypes marshals handles and
+            # LRESULT through 32-bit c_int, which truncates 64-bit HWNDs and
+            # mangles HWND_MESSAGE (-3) — CreateWindowExW then fails or crashes.
+            LRESULT = ctypes.c_ssize_t
+            kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+            kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+            user32.DefWindowProcW.restype = LRESULT
+            user32.DefWindowProcW.argtypes = [
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+            ]
+            user32.CreateWindowExW.restype = wintypes.HWND
+            user32.CreateWindowExW.argtypes = [
+                wintypes.DWORD,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.HWND,
+                wintypes.HMENU,
+                wintypes.HINSTANCE,
+                wintypes.LPVOID,
+            ]
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+            user32.GetMessageW.restype = ctypes.c_int
+            user32.GetMessageW.argtypes = [
+                ctypes.POINTER(wintypes.MSG),
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.UINT,
+            ]
+            user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.DispatchMessageW.restype = LRESULT
+            user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            wtsapi32.WTSRegisterSessionNotification.restype = wintypes.BOOL
+            wtsapi32.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+            # NB: the Win32 export really is spelled with a capital R: WTSUnRegister...
+            wtsapi32.WTSUnRegisterSessionNotification.restype = wintypes.BOOL
+            wtsapi32.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+
             self._thread_id = kernel32.GetCurrentThreadId()
 
             WNDPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_long, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+                LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
             )
 
             def _wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
@@ -203,6 +249,8 @@ class WindowsLockStateObserver:
                     ("lpszMenuName", wintypes.LPCWSTR),
                     ("lpszClassName", wintypes.LPCWSTR),
                 ]
+
+            user32.RegisterClassW.restype = wintypes.ATOM
 
             class_name = "StavauLockStateWindow"
             hinstance = kernel32.GetModuleHandleW(None)
@@ -260,7 +308,7 @@ class WindowsLockStateObserver:
                 user32.DispatchMessageW(ctypes.byref(msg))
 
             with contextlib.suppress(Exception):
-                wtsapi32.WTSUnregisterSessionNotification(hwnd)
+                wtsapi32.WTSUnRegisterSessionNotification(hwnd)
             with contextlib.suppress(Exception):
                 user32.DestroyWindow(hwnd)
         except Exception:
