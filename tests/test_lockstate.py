@@ -69,13 +69,29 @@ def logged_events(tmp_path: Path) -> list[str]:
 
 
 class TestFactory:
-    @pytest.mark.parametrize("platform", ["linux", "win32", "darwin", "plan9"])
-    def test_no_backend_yet_on_any_platform(
-        self, monkeypatch: pytest.MonkeyPatch, platform: str
+    @pytest.mark.parametrize(
+        ("platform", "backend_module"),
+        [
+            ("linux", "stavau.platform.lockstate_linux"),
+            ("win32", "stavau.platform.lockstate_windows"),
+            ("darwin", "stavau.platform.lockstate_macos"),
+        ],
+    )
+    def test_routes_to_platform_backend(
+        self, monkeypatch: pytest.MonkeyPatch, platform: str, backend_module: str
     ) -> None:
-        # Backends land in follow-up cards; until then every platform degrades
-        # to "no observer" rather than raising (observing is optional).
+        # The factory must call the right backend's make_observer without
+        # touching real OS plumbing in tests: substitute it with a sentinel.
+        import importlib
+
+        sentinel = FakeLockObserver([None])
+        module = importlib.import_module(backend_module)
+        monkeypatch.setattr(module, "make_observer", lambda: sentinel)
         monkeypatch.setattr(sys, "platform", platform)
+        assert get_lock_state_observer() is sentinel
+
+    def test_unknown_platform_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "plan9")
         assert get_lock_state_observer() is None
 
 

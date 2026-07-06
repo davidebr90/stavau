@@ -31,6 +31,9 @@ tray = [
   "pystray>=0.19",
   "pillow>=10.0",
 ]
+macos = [
+  "pyobjc-framework-Cocoa>=10",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov",
@@ -64,9 +67,26 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-# winrt is Windows-only; pystray/PIL/numpy ship no stubs. Ignore on all platforms
-# so type-checking passes uniformly in CI (Linux/macOS/Windows).
-module = ["pystray", "pystray.*", "PIL", "PIL.*", "numpy", "numpy.*", "winrt.*"]
+# winrt is Windows-only; dbus_fast is Linux-only (transitive bleak dependency);
+# pyobjc (Foundation/objc/AppKit) is macOS-only; pystray/PIL/numpy ship no
+# stubs. Ignore on all platforms so type-checking passes uniformly in CI.
+module = [
+  "pystray",
+  "pystray.*",
+  "PIL",
+  "PIL.*",
+  "numpy",
+  "numpy.*",
+  "winrt.*",
+  "dbus_fast",
+  "dbus_fast.*",
+  "Foundation",
+  "Foundation.*",
+  "objc",
+  "objc.*",
+  "AppKit",
+  "AppKit.*",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
 

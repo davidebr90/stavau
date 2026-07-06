@@ -42,12 +42,15 @@ def get_lock_state_observer() -> LockStateObserver | None:
     "unknown state" behavior in the monitoring loop.
     """
     if sys.platform.startswith("linux"):
-        # Backend planned: logind LockedHint over D-Bus.
-        return None
+        from stavau.platform.lockstate_linux import make_observer as make_linux
+
+        return make_linux()
     if sys.platform == "win32":
-        # Backend planned: WTS session lock/unlock notifications.
-        return None
+        from stavau.platform.lockstate_windows import make_observer as make_windows
+
+        return make_windows()
     if sys.platform == "darwin":
-        # Backend planned: screenIsLocked distributed notifications.
-        return None
+        from stavau.platform.lockstate_macos import make_observer as make_macos
+
+        return make_macos()
     return None
