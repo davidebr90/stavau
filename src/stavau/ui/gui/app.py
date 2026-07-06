@@ -30,12 +30,13 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -44,10 +45,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QStackedWidget,
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -61,6 +62,7 @@ from stavau.core.session import MonitorSession, Tick
 from stavau.i18n import available_languages, resolve_language, set_language, tr
 from stavau.platform.base import Locker, get_locker
 from stavau.ui.gui import viewmodel as vm
+from stavau.ui.gui.theme import DARK, LIGHT, build_stylesheet
 
 # ---------------------------------------------------------------- state icon
 
@@ -213,6 +215,8 @@ class CalibrationWizard(QDialog):
 
         buttons = QHBoxLayout()
         self._sample_button = QPushButton(tr("calibration.sample_button"))
+        self._sample_button.setObjectName("Primary")
+        self._sample_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._sample_button.clicked.connect(self._on_sample_clicked)
         buttons.addWidget(self._sample_button)
         layout.addLayout(buttons)
@@ -299,23 +303,33 @@ class MainWindow(QMainWindow):
         self._monitor_thread: QThread | None = None
         self._monitor_worker: _MonitorWorker | None = None
 
-        header = QLabel(tr("app.header_title"))
-        header.setStyleSheet("font-size: 20px; font-weight: 600; padding: 6px;")
-        header.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        # Modern layout: a left navigation rail + a stacked content area,
+        # replacing the old tab bar. Pages are the same widgets as before.
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._wrap_page(tr("tab.device"), self._build_device_tab()))
+        self._stack.addWidget(self._wrap_page(tr("tab.settings"), self._build_settings_tab()))
+        self._stack.addWidget(self._wrap_page(tr("tab.monitor"), self._build_monitor_tab()))
+        self._stack.addWidget(self._wrap_page(tr("tab.calibration"), self._build_calibration_tab()))
 
-        tabs = QTabWidget()
-        tabs.addTab(self._build_device_tab(), tr("tab.device"))
-        tabs.addTab(self._build_settings_tab(), tr("tab.settings"))
-        tabs.addTab(self._build_monitor_tab(), tr("tab.monitor"))
-        tabs.addTab(self._build_calibration_tab(), tr("tab.calibration"))
+        sidebar = self._build_sidebar(
+            [tr("tab.device"), tr("tab.settings"), tr("tab.monitor"), tr("tab.calibration")]
+        )
 
-        central = QWidget()
-        central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.addWidget(header)
-        central_layout.addWidget(tabs)
-        self.setCentralWidget(central)
-        self.resize(640, 480)
+        content = QWidget()
+        content.setObjectName("Content")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self._stack)
+
+        root = QWidget()
+        root.setObjectName("Root")
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self.resize(860, 600)
 
         # System tray icon (CARD-E2 request 2): owned by the window, mirrors
         # the window/taskbar icon, both regenerated from the same pure
@@ -331,6 +345,69 @@ class MainWindow(QMainWindow):
         icon = _icon_for_tick(tick, self._settings.radius_m, bool(self._settings.device_address))
         self.setWindowIcon(icon)
         self._tray_icon.setIcon(icon)
+        # Mirror the same coloured padlock in the monitor hero, if it exists.
+        if hasattr(self, "_hero_icon"):
+            decision = vm.icon_color(
+                tick, self._settings.radius_m, bool(self._settings.device_address)
+            )
+            if decision == "paused":
+                self._hero_icon.setPixmap(_padlock_pixmap(vm.ICON_PAUSED, paused=True, size=44))
+            else:
+                self._hero_icon.setPixmap(_padlock_pixmap(decision, size=44))
+
+    # ------------------------------------------------------------- chrome
+
+    def _build_sidebar(self, labels: list[str]) -> QWidget:
+        sidebar = QWidget()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(184)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(14, 18, 14, 18)
+        layout.setSpacing(4)
+
+        wordmark = QLabel("stavau")
+        wordmark.setObjectName("Wordmark")
+        layout.addWidget(wordmark)
+        tagline = QLabel(f"v{__version__}")
+        tagline.setObjectName("WordmarkTag")
+        layout.addWidget(tagline)
+        layout.addSpacing(10)
+
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
+        for index, label in enumerate(labels):
+            button = QPushButton(label)
+            button.setObjectName("NavButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _checked=False, i=index: self._stack.setCurrentIndex(i))
+            self._nav_group.addButton(button, index)
+            layout.addWidget(button)
+        first = self._nav_group.button(0)
+        if first is not None:
+            first.setChecked(True)
+
+        layout.addStretch(1)
+        return sidebar
+
+    def _wrap_page(self, title: str, inner: QWidget) -> QWidget:
+        """Give a page a titled, padded content area inside a card."""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(24, 22, 24, 24)
+        outer.setSpacing(14)
+
+        heading = QLabel(title)
+        heading.setObjectName("PageTitle")
+        outer.addWidget(heading)
+
+        card = QFrame()
+        card.setObjectName("Card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 18, 20, 18)
+        card_layout.addWidget(inner)
+        outer.addWidget(card, 1)
+        return page
 
     # ------------------------------------------------------------- DEVICE tab
 
@@ -339,12 +416,18 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
 
         self._device_label = QLabel()
+        self._device_label.setWordWrap(True)
         self._refresh_device_label()
         layout.addWidget(self._device_label)
 
         self._scan_button = QPushButton(tr("device.scan_button"))
+        self._scan_button.setObjectName("Primary")
+        self._scan_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._scan_button.clicked.connect(self._on_scan_clicked)
-        layout.addWidget(self._scan_button)
+        scan_row = QHBoxLayout()
+        scan_row.addWidget(self._scan_button)
+        scan_row.addStretch(1)
+        layout.addLayout(scan_row)
 
         self._scan_status = QLabel("")
         layout.addWidget(self._scan_status)
@@ -497,8 +580,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._settings_status)
 
         save_button = QPushButton(tr("settings.save_button"))
+        save_button.setObjectName("Primary")
+        save_button.setCursor(Qt.CursorShape.PointingHandCursor)
         save_button.clicked.connect(self._on_save_settings)
-        layout.addWidget(save_button)
+        save_row = QHBoxLayout()
+        save_row.addStretch(1)
+        save_row.addWidget(save_button)
+        layout.addLayout(save_row)
         layout.addStretch(1)
         return widget
 
@@ -544,34 +632,55 @@ class MainWindow(QMainWindow):
     def _build_monitor_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(14)
 
+        # Status hero: a large coloured padlock next to the live status text.
+        hero = QHBoxLayout()
+        hero.setSpacing(14)
+        self._hero_icon = QLabel()
+        self._hero_icon.setPixmap(_padlock_pixmap(vm.ICON_GREY, size=44))
+        hero.addWidget(self._hero_icon)
         self._status_line = QLabel(tr("monitor.stopped"))
-        layout.addWidget(self._status_line)
+        self._status_line.setObjectName("StatusHero")
+        self._status_line.setWordWrap(True)
+        hero.addWidget(self._status_line, 1)
+        layout.addLayout(hero)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(8)
         self._dry_run_button = QPushButton(tr("monitor.start_dry_run_button"))
+        self._dry_run_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._dry_run_button.clicked.connect(self._on_start_dry_run)
         buttons.addWidget(self._dry_run_button)
 
         self._armed_button = QPushButton(tr("monitor.start_armed_button"))
+        self._armed_button.setObjectName("Primary")
+        self._armed_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._armed_button.clicked.connect(self._on_start_armed)
         buttons.addWidget(self._armed_button)
 
         self._stop_button = QPushButton(tr("monitor.stop_button"))
+        self._stop_button.setObjectName("Danger")
+        self._stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._stop_button.setEnabled(False)
         self._stop_button.clicked.connect(self._on_stop_monitor)
         buttons.addWidget(self._stop_button)
+        buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        log_group = QGroupBox(tr("monitor.log_group"))
-        log_layout = QVBoxLayout(log_group)
+        log_title = QLabel(tr("monitor.log_group"))
+        log_title.setObjectName("Muted")
+        layout.addWidget(log_title)
         self._log_view = QPlainTextEdit()
         self._log_view.setReadOnly(True)
-        log_layout.addWidget(self._log_view)
+        layout.addWidget(self._log_view, 1)
         refresh_button = QPushButton(tr("monitor.refresh_log_button"))
+        refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_button.clicked.connect(self._refresh_log_view)
-        log_layout.addWidget(refresh_button)
-        layout.addWidget(log_group)
+        refresh_row = QHBoxLayout()
+        refresh_row.addStretch(1)
+        refresh_row.addWidget(refresh_button)
+        layout.addLayout(refresh_row)
 
         self._refresh_log_view()
         return widget
@@ -655,10 +764,17 @@ class MainWindow(QMainWindow):
     def _build_calibration_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel(tr("calibration.tab_intro")))
+        intro = QLabel(tr("calibration.tab_intro"))
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
         start_button = QPushButton(tr("calibration.start_button"))
+        start_button.setObjectName("Primary")
+        start_button.setCursor(Qt.CursorShape.PointingHandCursor)
         start_button.clicked.connect(self._on_start_calibration)
-        layout.addWidget(start_button)
+        start_row = QHBoxLayout()
+        start_row.addWidget(start_button)
+        start_row.addStretch(1)
+        layout.addLayout(start_row)
         self._calibration_status = QLabel(self._calibration_status_text())
         self._calibration_status.setWordWrap(True)
         layout.addWidget(self._calibration_status)
@@ -698,10 +814,24 @@ def _load_or_default_settings() -> Settings:
     return settings
 
 
+def _apply_theme(app: QApplication) -> None:
+    """Apply the stavau stylesheet, following the OS dark/light preference."""
+    dark = False
+    try:
+        from PySide6.QtCore import Qt as _Qt
+
+        dark = app.styleHints().colorScheme() == _Qt.ColorScheme.Dark
+    except Exception:  # noqa: BLE001 - older Qt without colorScheme(): default to light
+        dark = False
+    app.setStyleSheet(build_stylesheet(DARK if dark else LIGHT))
+
+
 def run_gui(settings_or_none: Settings | None = None) -> int:
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
+    if isinstance(app, QApplication):
+        _apply_theme(app)
     window = MainWindow(settings_or_none)
     window.show()
     return app.exec()

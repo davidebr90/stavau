@@ -511,3 +511,21 @@ def test_tr_direct_smoke_test_both_languages() -> None:
     assert tr("tab.settings") == "Settings"
     set_language("it")
     assert tr("tab.settings") == "Impostazioni"
+
+
+def test_theme_stylesheet_is_non_empty_and_uses_palette_colors() -> None:
+    from stavau.ui.gui.theme import DARK, LIGHT, build_stylesheet
+
+    for palette in (LIGHT, DARK):
+        css = build_stylesheet(palette)
+        assert len(css) > 500
+        assert palette.primary in css
+        assert palette.window in css
+        assert "QPushButton#Primary" in css
+        assert "#Sidebar" in css
+
+
+def test_theme_light_and_dark_differ() -> None:
+    from stavau.ui.gui.theme import DARK, LIGHT, build_stylesheet
+
+    assert build_stylesheet(LIGHT) != build_stylesheet(DARK)
