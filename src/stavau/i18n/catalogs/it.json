@@ -35,6 +35,11 @@
   "device.kind.generic": "Dispositivo BLE",
   "device.kind.unknown": "Sconosciuto",
   "device.kind.tv": "TV",
+  "device.kind.headphones": "Cuffie",
+  "device.kind.speaker": "Speaker",
+  "device.kind.keyboard": "Tastiera/Mouse",
+  "device.kind.mouse": "Mouse",
+  "device.kind.phone": "Telefono",
 
   "settings.radius_label": "Raggio",
   "settings.grace_label": "Periodo di tolleranza",

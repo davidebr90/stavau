@@ -240,17 +240,17 @@ def test_device_kind_label_variants() -> None:
     from stavau.core.deviceid import APPLE_COMPANY_ID, SAMSUNG_COMPANY_ID
 
     set_language("en")
-    assert "Apple" in vm.device_kind_label(frozenset({APPLE_COMPANY_ID}), "")
-    assert "Android" in vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "")
-    # No vendor company id but it advertises -> a generic BLE device.
-    assert "BLE device" in vm.device_kind_label(frozenset(), "")
+    assert "Apple" in vm.device_kind_label(frozenset({APPLE_COMPANY_ID}))
+    assert "Android" in vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}))
+    # No vendor id, and a public/static address -> a generic BLE device.
+    assert "BLE device" in vm.device_kind_label(frozenset(), address="A0:D7:F3:79:5E:81")
 
 
 def test_device_kind_label_uses_distinct_emoji_per_vendor() -> None:
     from stavau.core.deviceid import APPLE_COMPANY_ID, SAMSUNG_COMPANY_ID
 
-    apple = vm.device_kind_label(frozenset({APPLE_COMPANY_ID}), "")
-    android = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "")
+    apple = vm.device_kind_label(frozenset({APPLE_COMPANY_ID}))
+    android = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}))
     assert "\U0001f34e" in apple  # apple glyph
     assert "\U0001f916" in android  # robot glyph
     assert apple[0] != android[0]
@@ -261,12 +261,46 @@ def test_device_kind_label_tv_name_wins_over_vendor() -> None:
 
     set_language("en")
     # A Samsung smart TV advertises as Android, but its name says TV -> TV.
-    label = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "[TV] Samsung BU8070 75 TV")
+    label = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), name="[TV] Samsung BU8070 75 TV")
     assert "TV" in label
     assert "\U0001f4fa" in label  # television glyph
     assert "Android" not in label
     # 'tv' inside another word must not trigger the TV label.
-    assert "TV" not in vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "octave-speaker")
+    assert "TV" not in vm.device_kind_label(frozenset(), name="netvibes-node")
+
+
+def test_device_kind_label_name_categories() -> None:
+    set_language("en")
+    assert "Headphones" in vm.device_kind_label(frozenset(), name="Galaxy Buds Pro")
+    assert "Headphones" in vm.device_kind_label(frozenset(), name="ACCENTUM Plus")
+    assert "Speaker" in vm.device_kind_label(frozenset(), name="Bose SoundLink")
+    assert "Keyboard" in vm.device_kind_label(frozenset(), name="Logitech Keyboard K380")
+    assert "Mouse" in vm.device_kind_label(frozenset(), name="MX Master Mouse")
+
+
+def test_device_kind_label_service_uuid_signals() -> None:
+    set_language("en")
+    hid = frozenset({"00001812-0000-1000-8000-00805f9b34fb"})
+    assert "\U00002328" in vm.device_kind_label(frozenset(), hid)  # keyboard glyph
+    heart = frozenset({"0000180d-0000-1000-8000-00805f9b34fb"})
+    assert "Wearable" in vm.device_kind_label(frozenset(), heart)
+
+
+def test_address_is_private_detects_rotating_mac() -> None:
+    # 0x43 = 0b01xxxxxx -> resolvable private (rotating personal device).
+    assert vm.address_is_private("43:BC:A3:9F:B6:1F") is True
+    # 0xA0 = 0b10xxxxxx -> public OUI (fixed vendor device, e.g. a TV).
+    assert vm.address_is_private("A0:D7:F3:79:5E:81") is False
+    # A CoreBluetooth UUID (macOS) is not a MAC -> unknown.
+    assert vm.address_is_private("550E8400-E29B-41D4-A716-446655440000") is None
+
+
+def test_private_mac_without_vendor_id_is_labelled_phone() -> None:
+    set_language("en")
+    # No company id, no service, no name, but a rotating private MAC: this is
+    # the idle-Android-phone case -> phone, not a bare BLE device.
+    label = vm.device_kind_label(frozenset(), name="", address="43:BC:A3:9F:B6:1F")
+    assert "Phone" in label
 
 
 def test_format_device_name_maps_unnamed() -> None:

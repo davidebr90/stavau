@@ -118,47 +118,135 @@ class ScanRow:
 # Emoji hints per device kind, prepended to the translated kind word so the
 # table communicates "what is this device" at a glance. Distinct glyphs per
 # vendor were an explicit request: apple vs robot vs a plain phone.
+# Glyph + i18n key per kind token. Tokens beyond the vendor DeviceKind values
+# (apple/android/microsoft/wearable/generic/unknown) are inferred from the name
+# or advertised behaviour: tv, headphones, speaker, keyboard, mouse, phone.
 _KIND_EMOJI = {
     "apple": "\U0001f34e",  # red apple
     "android": "\U0001f916",  # robot
     "microsoft": "\U0001f4bb",  # laptop
     "wearable": "⌚",  # watch
-    "generic": "\U0001f4f1",  # phone/smartphone
+    "generic": "\U0001f535",  # blue circle
     "unknown": "\U0001f535",  # blue circle
+    "tv": "\U0001f4fa",  # television
+    "headphones": "\U0001f3a7",  # headphone
+    "speaker": "\U0001f50a",  # loudspeaker
+    "keyboard": "\U00002328\U0000fe0f",  # keyboard
+    "mouse": "\U0001f5b1\U0000fe0f",  # computer mouse
+    "phone": "\U0001f4f1",  # smartphone (rotating-MAC personal device)
 }
 _KIND_KEYS = {
-    "apple": "device.kind.apple",
-    "android": "device.kind.android",
-    "microsoft": "device.kind.microsoft",
-    "wearable": "device.kind.wearable",
-    "generic": "device.kind.generic",
-    "unknown": "device.kind.unknown",
+    token: f"device.kind.{token}"
+    for token in (
+        "apple",
+        "android",
+        "microsoft",
+        "wearable",
+        "generic",
+        "unknown",
+        "tv",
+        "headphones",
+        "speaker",
+        "keyboard",
+        "mouse",
+        "phone",
+    )
 }
-_TV_RE = re.compile(r"\bTV\b|TELEVIS", re.IGNORECASE)
+
+# "TV" is a 2-letter token, so it needs a word boundary (a plain substring
+# would false-match "netvibes"); the rest are distinctive enough for substrings.
+_TV_RE = re.compile(r"\bTV\b|TELEVIS|SOUNDBAR", re.IGNORECASE)
+
+# Name heuristics, most specific first. Each is a set of case-insensitive words.
+_NAME_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("headphones", ("headphone", "headset", "earbud", "earphone", "airpods", "buds", "accentum")),
+    ("speaker", ("speaker", "soundlink", "boombox", "sound bar")),
+    ("keyboard", ("keyboard", "tastiera")),
+    ("mouse", ("mouse",)),
+    ("wearable", ("watch", "orolog")),
+]
+
+# Advertised 16-bit GATT service UUIDs that reveal a device class, regardless of
+# name (the strongest name-independent signal bleak exposes).
+_HID_SERVICE = 0x1812  # Human Interface Device -> keyboard/mouse
+_FITNESS_SERVICES = (0x180D, 0x1814, 0x1816)  # heart rate / running / cycling
+_LE_AUDIO_SERVICES = (0x1850, 0x184E, 0x1855, 0x1844)  # PACS/ASCS/TMAS/VCS
 
 
-def _looks_like_tv(name: str) -> bool:
-    """A device whose advertised name says 'TV' (e.g. '[TV] Samsung ... 75 TV')
-    or 'television/televisore/téléviseur' is a TV, whatever its vendor id says."""
-    return bool(name) and _TV_RE.search(name) is not None
+def _matches_word(name: str, words: tuple[str, ...]) -> bool:
+    lowered = f" {name.lower()} "
+    return any(w in lowered for w in words)
 
 
-def device_kind_label(company_ids: frozenset[int], name: str) -> str:
-    """Human-friendly device type ('🍎 Apple', '📺 TV', '⌚ Wearable', ...).
+def _has_service(service_uuids: frozenset[str], value16: int) -> bool:
+    needle = f"0000{value16:04x}-0000-1000-8000-00805f9b34fb"
+    short = f"{value16:04x}"
+    return any(u in (needle, short) for u in service_uuids)
 
-    A name that says 'TV' wins over the vendor id (a smart TV advertises as
-    Android but the user thinks of it as a TV); otherwise classify by the
-    advertised company ids, the same way the setup wizard does.
-    """
-    from stavau.core.deviceid import Observation, classify
 
-    if _looks_like_tv(name):
-        return f"\U0001f4fa {tr('device.kind.tv')}"  # television
+def address_is_private(address: str) -> bool | None:
+    """True if the address looks like a rotating *private* BLE address (the two
+    high bits are 00 or 01: non-resolvable / resolvable private), which is
+    characteristic of phones and other personal privacy devices; False for a
+    public/static (fixed vendor) address; None when the address is not a MAC
+    (e.g. the opaque CoreBluetooth UUID on macOS)."""
+    parts = address.split(":")
+    if len(parts) != 6:
+        return None
+    try:
+        first = int(parts[0], 16)
+    except ValueError:
+        return None
+    return (first >> 6) in (0b00, 0b01)
+
+
+def _classify_kind(
+    company_ids: frozenset[int], service_uuids: frozenset[str], name: str, address: str
+) -> str:
+    from stavau.core.deviceid import DeviceKind, Observation, classify
+
+    if name and _TV_RE.search(name):
+        return "tv"
+    for token, words in _NAME_RULES:
+        if _matches_word(name, words):
+            return token
+    if _has_service(service_uuids, _HID_SERVICE):
+        return "keyboard"  # generic input device; name would refine to mouse
+    if any(_has_service(service_uuids, s) for s in _FITNESS_SERVICES):
+        return "wearable"
+    if any(_has_service(service_uuids, s) for s in _LE_AUDIO_SERVICES):
+        return "headphones"
     kind = classify(
         Observation(company_ids=company_ids, name=name or "", advertisement_count=1)
     ).kind
-    emoji = _KIND_EMOJI.get(kind.value, "•")
-    return f"{emoji} {tr(_KIND_KEYS.get(kind.value, 'device.kind.unknown'))}"
+    if kind not in (DeviceKind.GENERIC, DeviceKind.UNKNOWN):
+        return str(kind.value)
+    # No vendor id and no behaviour hint: a rotating private MAC strongly
+    # suggests a phone / personal device (e.g. an idle Android that advertises
+    # nothing identifying but still rotates its address).
+    if address_is_private(address):
+        return "phone"
+    return str(kind.value)
+
+
+def device_kind_label(
+    company_ids: frozenset[int],
+    service_uuids: frozenset[str] = frozenset(),
+    name: str = "",
+    address: str = "",
+) -> str:
+    """Human-friendly device type ('🍎 Apple', '📺 TV', '🎧 Headphones', ...).
+
+    Layers, most reliable first: the advertised name (TV / headphones / speaker
+    / keyboard / mouse / watch), then behaviour from advertised service UUIDs
+    (HID, fitness, LE audio), then the vendor company id, and finally a rotating
+    private MAC as a weak "this is a phone" hint. See the module docstring notes
+    in core/deviceid and docs/device-compatibility for why names are so often
+    absent.
+    """
+    token = _classify_kind(company_ids, service_uuids, name, address)
+    emoji = _KIND_EMOJI.get(token, "\U0001f535")
+    return f"{emoji} {tr(_KIND_KEYS.get(token, 'device.kind.unknown'))}"
 
 
 def estimate_distance(rssi: float, rssi_at_1m: float, path_loss_exponent: float) -> float | None:
@@ -189,7 +277,7 @@ def format_scan_rows(
             address=d.address,
             name=d.name,
             rssi=float(d.rssi),
-            kind_label=device_kind_label(d.company_ids, d.name),
+            kind_label=device_kind_label(d.company_ids, d.service_uuids, d.name, d.address),
             distance_m=estimate_distance(float(d.rssi), rssi_at_1m, path_loss_exponent),
         )
         for d in devices

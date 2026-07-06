@@ -31,9 +31,11 @@ class DiscoveredDevice:
     address: str
     name: str
     rssi: int
-    # Bluetooth SIG company IDs seen in the advertisement's manufacturer data,
-    # used to label the device kind (Apple / Android / ...) in the picker.
+    # Advertisement traits used to label the device kind in the picker beyond
+    # its (often absent) name: Bluetooth SIG company IDs and advertised GATT
+    # service UUIDs (e.g. HID / heart-rate / LE-audio reveal the device class).
     company_ids: frozenset[int] = frozenset()
+    service_uuids: frozenset[str] = frozenset()
 
 
 async def scan_devices(timeout: float = 10.0) -> list[DiscoveredDevice]:
@@ -45,6 +47,7 @@ async def scan_devices(timeout: float = 10.0) -> list[DiscoveredDevice]:
             name=adv.local_name or device.name or "<unnamed>",
             rssi=adv.rssi,
             company_ids=frozenset(adv.manufacturer_data.keys()),
+            service_uuids=frozenset(u.lower() for u in adv.service_uuids),
         )
         for address, (device, adv) in found.items()
     ]
