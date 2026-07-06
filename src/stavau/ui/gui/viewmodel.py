@@ -115,14 +115,15 @@ class ScanRow:
 
 
 # Emoji hints per device kind, prepended to the translated kind word so the
-# table communicates "what is this device" at a glance.
+# table communicates "what is this device" at a glance. Distinct glyphs per
+# vendor were an explicit request: apple vs robot vs a plain phone.
 _KIND_EMOJI = {
-    "apple": "\U0001f4f1",  # phone
-    "android": "\U0001f4f1",  # phone
+    "apple": "\U0001f34e",  # red apple
+    "android": "\U0001f916",  # robot
     "microsoft": "\U0001f4bb",  # laptop
     "wearable": "⌚",  # watch
-    "generic": "\U0001f535",  # blue circle
-    "unknown": "•",  # bullet
+    "generic": "\U0001f4f1",  # phone/smartphone
+    "unknown": "\U0001f535",  # blue circle
 }
 _KIND_KEYS = {
     "apple": "device.kind.apple",
@@ -192,6 +193,17 @@ def format_nearby_rows(devices: list[NearbyDevice]) -> list[ScanRow]:
 
 def format_rssi(rssi: float) -> str:
     return f"{rssi:.0f} dBm"
+
+
+def format_device_name(name: str) -> str:
+    """Show a friendly '(no name)' instead of the raw '<unnamed>' sentinel.
+
+    Most phones/earbuds omit their name from BLE advertisements (privacy +
+    packet size), so this is the common case — Type and Distance identify them.
+    """
+    if not name or name == "<unnamed>":
+        return tr("device.unnamed")
+    return name
 
 
 def format_distance(distance_m: float | None) -> str:

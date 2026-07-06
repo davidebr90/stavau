@@ -27,6 +27,7 @@
   "device.use_button": "Use this device",
   "device.selected_note": "Selected: {name} ({address})",
   "device.chosen_confirm": "✓ Trusted device set: {name} ({address})",
+  "device.unnamed": "(no name)",
   "device.kind.apple": "Apple",
   "device.kind.android": "Android",
   "device.kind.microsoft": "Microsoft",

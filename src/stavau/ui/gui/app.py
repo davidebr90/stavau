@@ -598,7 +598,8 @@ class MainWindow(QMainWindow):
             kind = _SortItem(row.kind_label, row.kind_label.lower())
             kind.setData(_ADDRESS_ROLE, row.address.upper())
             self._scan_table.setItem(i, 0, kind)
-            self._scan_table.setItem(i, 1, _SortItem(row.name, row.name.lower()))
+            display_name = vm.format_device_name(row.name)
+            self._scan_table.setItem(i, 1, _SortItem(display_name, display_name.lower()))
             far = float("inf") if row.distance_m is None else row.distance_m
             self._scan_table.setItem(i, 2, _SortItem(vm.format_distance(row.distance_m), far))
             self._scan_table.setItem(i, 3, _SortItem(vm.format_rssi(row.rssi), row.rssi))

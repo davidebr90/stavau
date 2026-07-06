@@ -246,6 +246,23 @@ def test_device_kind_label_variants() -> None:
     assert "BLE device" in vm.device_kind_label(frozenset(), "")
 
 
+def test_device_kind_label_uses_distinct_emoji_per_vendor() -> None:
+    from stavau.core.deviceid import APPLE_COMPANY_ID, SAMSUNG_COMPANY_ID
+
+    apple = vm.device_kind_label(frozenset({APPLE_COMPANY_ID}), "")
+    android = vm.device_kind_label(frozenset({SAMSUNG_COMPANY_ID}), "")
+    assert "\U0001f34e" in apple  # apple glyph
+    assert "\U0001f916" in android  # robot glyph
+    assert apple[0] != android[0]
+
+
+def test_format_device_name_maps_unnamed() -> None:
+    set_language("en")
+    assert vm.format_device_name("<unnamed>") == "(no name)"
+    assert vm.format_device_name("") == "(no name)"
+    assert vm.format_device_name("AirPods") == "AirPods"
+
+
 def test_format_distance_bands() -> None:
     assert vm.format_distance(None) == "?"
     assert vm.format_distance(0.4) == "0.4 m"
