@@ -524,11 +524,7 @@ class MainWindow(QMainWindow):
         new_language = self._language_combo.currentData()
         language_changed = new_language != getattr(self._settings, "language", "auto")
         # settings.py is a READ-ONLY hotspot; until the `language` field lands
-        # there (see PATCH-NOTES.md), this setattr is forward-compatible: it
-        # is a no-op on today's Settings (the attribute is simply added back
-        # on, read defensively via getattr elsewhere) and becomes real,
-        # persisted state the moment the dataclass field exists.
-        self._settings.language = new_language  # type: ignore[attr-defined]
+        self._settings.language = new_language
 
         result = vm.validate_settings_message(self._settings)
         if not result.ok:
