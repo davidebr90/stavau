@@ -93,10 +93,11 @@ class WindowsLockStateObserver:
         thread = self._thread
         thread_id = self._thread_id
         if thread is not None and thread.is_alive() and thread_id is not None:
-            with contextlib.suppress(Exception):
-                import ctypes
+            if sys.platform == "win32":  # narrow for mypy: windll is Windows-only
+                with contextlib.suppress(Exception):
+                    import ctypes
 
-                ctypes.windll.user32.PostThreadMessageW(thread_id, WM_QUIT, 0, 0)
+                    ctypes.windll.user32.PostThreadMessageW(thread_id, WM_QUIT, 0, 0)
             thread.join(timeout=2.0)
 
     # -- Pure state-transition logic (unit-testable, no Windows needed) --
@@ -157,6 +158,9 @@ class WindowsLockStateObserver:
         return True
 
     def _run_message_loop(self, ready: threading.Event, ok: threading.Event) -> None:
+        if sys.platform != "win32":  # pragma: no cover — _start prevents this
+            ready.set()  # ok is never set: _start reports failure
+            return
         try:
             import ctypes
             from ctypes import wintypes
