@@ -5,6 +5,10 @@
   "tab.settings": "Settings",
   "tab.monitor": "Monitor",
   "tab.calibration": "Calibration",
+  "tray.show_window": "Show window",
+  "tray.start_monitor": "Start monitoring (dry-run)",
+  "tray.stop_monitor": "Stop monitoring",
+  "tray.quit": "Quit stavau",
 
   "device.trusted_label": "Trusted device: {alias} ({address})",
   "device.alias_none": "(none)",
@@ -22,6 +26,7 @@
   "device.select_hint": "Select a device from the list, then click “Use this device” to make it your trusted device.",
   "device.use_button": "Use this device",
   "device.selected_note": "Selected: {name} ({address})",
+  "device.chosen_confirm": "✓ Trusted device set: {name} ({address})",
   "device.kind.apple": "Apple",
   "device.kind.android": "Android",
   "device.kind.microsoft": "Microsoft",

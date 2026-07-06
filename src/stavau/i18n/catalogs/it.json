@@ -5,6 +5,10 @@
   "tab.settings": "Impostazioni",
   "tab.monitor": "Monitoraggio",
   "tab.calibration": "Calibrazione",
+  "tray.show_window": "Mostra finestra",
+  "tray.start_monitor": "Avvia monitoraggio (dry-run)",
+  "tray.stop_monitor": "Ferma monitoraggio",
+  "tray.quit": "Esci da stavau",
 
   "device.trusted_label": "Dispositivo attendibile: {alias} ({address})",
   "device.alias_none": "(nessuno)",
@@ -22,6 +26,7 @@
   "device.select_hint": "Seleziona un dispositivo dalla lista, poi clicca “Usa questo dispositivo” per renderlo il tuo dispositivo fidato.",
   "device.use_button": "Usa questo dispositivo",
   "device.selected_note": "Selezionato: {name} ({address})",
+  "device.chosen_confirm": "✓ Dispositivo fidato impostato: {name} ({address})",
   "device.kind.apple": "Apple",
   "device.kind.android": "Android",
   "device.kind.microsoft": "Microsoft",

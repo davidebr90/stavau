@@ -34,6 +34,8 @@ class Palette:
     on_primary: str = "#ffffff"
     danger: str = "#cc3e34"
     danger_hover: str = "#b5342b"
+    success: str = "#2e9e46"
+    chosen_row: str = "rgba(53, 169, 74, 55)"
 
 
 LIGHT = Palette(
@@ -66,6 +68,8 @@ DARK = Palette(
     input_bg="#141b29",
     danger="#e05a4f",
     danger_hover="#c94a40",
+    success="#4fce6a",
+    chosen_row="rgba(53, 169, 74, 70)",
 )
 
 
@@ -97,7 +101,16 @@ def build_stylesheet(p: Palette) -> str:
     }}
     #PageTitle {{ font-size: 18px; font-weight: 700; color: {p.text}; }}
     #Muted, QLabel#Muted {{ color: {p.muted}; }}
+    #Success, QLabel#Success {{ color: {p.success}; font-weight: 600; }}
+    #Error, QLabel#Error {{ color: {p.danger}; font-weight: 600; }}
     #StatusHero {{ font-size: 15px; font-weight: 600; color: {p.text}; }}
+
+    /* --- busy indicator (scan spinner) --- */
+    QProgressBar {{
+        background: {p.surface}; border: none; border-radius: 4px;
+        max-height: 6px; min-height: 6px;
+    }}
+    QProgressBar::chunk {{ background: {p.primary}; border-radius: 4px; }}
 
     /* --- buttons --- */
     QPushButton {{

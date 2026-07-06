@@ -27,7 +27,7 @@ import sys
 import threading
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -41,8 +41,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -118,6 +120,27 @@ def _icon_for_tick(tick_or_none: Tick | None, radius_m: float, has_device: bool)
     if decision == "paused":
         return QIcon(_padlock_pixmap(vm.ICON_PAUSED, paused=True))
     return QIcon(_padlock_pixmap(decision))
+
+
+_ADDRESS_ROLE = int(Qt.ItemDataRole.UserRole)
+_CHOSEN_BRUSH = QBrush(QColor(53, 169, 74, 60))  # translucent brand green
+
+
+class _SortItem(QTableWidgetItem):
+    """Table cell that sorts by a supplied key (numeric where it matters), so
+    clicking a column header orders it correctly instead of lexicographically."""
+
+    def __init__(self, text: str, sort_key: float | str) -> None:
+        super().__init__(text)
+        self._sort_key = sort_key
+
+    def __lt__(self, other: object) -> bool:
+        if isinstance(other, _SortItem):
+            try:
+                return bool(self._sort_key < other._sort_key)  # type: ignore[operator]
+            except TypeError:
+                pass
+        return super().__lt__(other)
 
 
 # ---------------------------------------------------------------- scan worker
@@ -332,14 +355,43 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self.resize(860, 600)
 
-        # System tray icon (CARD-E2 request 2): owned by the window, mirrors
-        # the window/taskbar icon, both regenerated from the same pure
-        # icon_color() decision. No monitor running yet -> idle icon.
+        # System tray icon: owned by the window, mirrors the taskbar icon,
+        # regenerated from the same pure icon_color() decision, with a context
+        # menu (right-click) to drive the app without the window in front.
         self._tray_icon = QSystemTrayIcon(self)
-        self._tray_icon.setToolTip(f"stavau {__version__}")
+        self._tray_menu = QMenu()
+        self._tray_show_action = QAction(tr("tray.show_window"), self)
+        self._tray_show_action.triggered.connect(self._show_and_raise)
+        self._tray_menu.addAction(self._tray_show_action)
+        self._tray_start_action = QAction(tr("tray.start_monitor"), self)
+        self._tray_start_action.triggered.connect(self._on_start_dry_run)
+        self._tray_menu.addAction(self._tray_start_action)
+        self._tray_stop_action = QAction(tr("tray.stop_monitor"), self)
+        self._tray_stop_action.triggered.connect(self._on_stop_monitor)
+        self._tray_stop_action.setEnabled(False)
+        self._tray_menu.addAction(self._tray_stop_action)
+        self._tray_menu.addSeparator()
+        quit_action = QAction(tr("tray.quit"), self)
+        quit_action.triggered.connect(QApplication.quit)
+        self._tray_menu.addAction(quit_action)
+        self._tray_icon.setContextMenu(self._tray_menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.setToolTip(f"stavau {__version__} — {tr('monitor.stopped')}")
         self._refresh_state_icon(None)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray_icon.show()
+
+    def _show_and_raise(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._show_and_raise()
 
     def _refresh_state_icon(self, tick: Tick | None) -> None:
         """Regenerate the taskbar (window) icon and the tray icon together."""
@@ -433,6 +485,13 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self._scan_status, 1)
         layout.addLayout(top_row)
 
+        # Indeterminate progress bar as a scan spinner (hidden when idle).
+        self._scan_spinner = QProgressBar()
+        self._scan_spinner.setRange(0, 0)  # busy/indeterminate animation
+        self._scan_spinner.setTextVisible(False)
+        self._scan_spinner.setVisible(False)
+        layout.addWidget(self._scan_spinner)
+
         hint = QLabel(tr("device.select_hint"))
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
@@ -453,6 +512,7 @@ class MainWindow(QMainWindow):
         self._scan_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._scan_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._scan_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._scan_table.setSortingEnabled(True)  # click a header to sort asc/desc
         self._scan_table.verticalHeader().setVisible(False)
         header = self._scan_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -477,6 +537,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(bottom_row)
 
         self._scan_rows: list[vm.ScanRow] = []
+        # The currently-trusted address, highlighted in the table when present.
+        self._chosen_address = (self._settings.device_address or "").upper()
         return widget
 
     def _refresh_device_label(self) -> None:
@@ -500,6 +562,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_clicked(self) -> None:
         self._scan_button.setEnabled(False)
+        self._scan_spinner.setVisible(True)
         self._scan_status.setText(tr("device.scanning"))
         self._scan_thread = QThread(self)
         self._scan_worker = _ScanWorker()
@@ -513,10 +576,12 @@ class MainWindow(QMainWindow):
 
     def _on_scan_failed(self, error: str) -> None:
         self._scan_button.setEnabled(True)
+        self._scan_spinner.setVisible(False)
         self._scan_status.setText(tr("device.scan_failed", error=error))
 
     def _on_scan_finished(self, devices: list[object]) -> None:
         self._scan_button.setEnabled(True)
+        self._scan_spinner.setVisible(False)
         rows = vm.format_scan_rows(
             devices,  # type: ignore[arg-type]
             self._settings.rssi_at_1m,
@@ -524,22 +589,50 @@ class MainWindow(QMainWindow):
         )
         self._scan_rows = rows
         self._scan_status.setText(tr("device.scan_found", count=len(rows)))
+        # Repopulate with sorting momentarily off (so rows don't reshuffle
+        # mid-insert), storing each row's address on the cells so selection and
+        # highlighting stay correct after the user sorts by any column.
+        self._scan_table.setSortingEnabled(False)
         self._scan_table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            self._scan_table.setItem(i, 0, QTableWidgetItem(row.kind_label))
-            self._scan_table.setItem(i, 1, QTableWidgetItem(row.name))
-            self._scan_table.setItem(i, 2, QTableWidgetItem(vm.format_distance(row.distance_m)))
-            self._scan_table.setItem(i, 3, QTableWidgetItem(vm.format_rssi(row.rssi)))
-            self._scan_table.setItem(i, 4, QTableWidgetItem(row.address))
+            kind = _SortItem(row.kind_label, row.kind_label.lower())
+            kind.setData(_ADDRESS_ROLE, row.address.upper())
+            self._scan_table.setItem(i, 0, kind)
+            self._scan_table.setItem(i, 1, _SortItem(row.name, row.name.lower()))
+            far = float("inf") if row.distance_m is None else row.distance_m
+            self._scan_table.setItem(i, 2, _SortItem(vm.format_distance(row.distance_m), far))
+            self._scan_table.setItem(i, 3, _SortItem(vm.format_rssi(row.rssi), row.rssi))
+            self._scan_table.setItem(i, 4, _SortItem(row.address, row.address))
+        self._scan_table.setSortingEnabled(True)
+        self._highlight_chosen_row()
+
+    def _row_address(self, view_row: int) -> str | None:
+        item = self._scan_table.item(view_row, 0)
+        if item is None:
+            return None
+        value = item.data(_ADDRESS_ROLE)
+        return str(value) if value else None
 
     def _selected_scan_row(self) -> vm.ScanRow | None:
         selected = self._scan_table.selectionModel().selectedRows()
         if not selected:
             return None
-        index = selected[0].row()
-        if index >= len(self._scan_rows):
+        address = self._row_address(selected[0].row())
+        if address is None:
             return None
-        return self._scan_rows[index]
+        for row in self._scan_rows:
+            if row.address.upper() == address:
+                return row
+        return None
+
+    def _highlight_chosen_row(self) -> None:
+        """Paint the trusted-device row a persistent colour (survives sorting)."""
+        for view_row in range(self._scan_table.rowCount()):
+            is_chosen = self._row_address(view_row) == self._chosen_address
+            for col in range(self._scan_table.columnCount()):
+                cell = self._scan_table.item(view_row, col)
+                if cell is not None:
+                    cell.setBackground(_CHOSEN_BRUSH if is_chosen else QBrush())
 
     def _on_scan_row_selected(self) -> None:
         # Selecting a row only *highlights* it and previews the choice; the
@@ -548,11 +641,11 @@ class MainWindow(QMainWindow):
         row = self._selected_scan_row()
         self._use_button.setEnabled(row is not None)
         if row is not None:
+            self._selected_note.setObjectName("Muted")
+            self._selected_note.setStyleSheet("")  # clear any success styling
             self._selected_note.setText(
                 tr("device.selected_note", name=row.name, address=row.address)
             )
-        else:
-            self._selected_note.setText("")
 
     def _use_selected_device(self) -> None:
         row = self._selected_scan_row()
@@ -561,7 +654,18 @@ class MainWindow(QMainWindow):
         self._settings.device_address = row.address.upper()
         self._settings.device_alias = row.name if row.name != "<unnamed>" else row.address
         self._settings.save()
+        self._chosen_address = row.address.upper()
+        self._highlight_chosen_row()
         self._refresh_device_label()
+        # Explicit, unmistakable success confirmation (green).
+        self._selected_note.setObjectName("Success")
+        alias = row.name if row.name != "<unnamed>" else row.address
+        self._selected_note.setText(tr("device.chosen_confirm", name=alias, address=row.address))
+        # Re-polish so the #Success stylesheet rule takes effect immediately.
+        style = self._selected_note.style()
+        if style is not None:
+            style.unpolish(self._selected_note)
+            style.polish(self._selected_note)
 
     # ------------------------------------------------------------ SETTINGS tab
 
@@ -785,6 +889,8 @@ class MainWindow(QMainWindow):
         self._dry_run_button.setEnabled(False)
         self._armed_button.setEnabled(False)
         self._stop_button.setEnabled(True)
+        self._tray_start_action.setEnabled(False)
+        self._tray_stop_action.setEnabled(True)
         self._status_line.setText(tr("monitor.starting"))
 
         self._monitor_thread = QThread(self)
@@ -797,16 +903,22 @@ class MainWindow(QMainWindow):
 
     def _on_tick(self, tick: object) -> None:
         assert isinstance(tick, Tick)
-        self._status_line.setText(vm.format_status(tick))
+        status = vm.format_status(tick)
+        self._status_line.setText(status)
         self._refresh_state_icon(tick)
+        self._tray_icon.setToolTip(f"stavau {__version__} — {status}")
 
     def _on_monitor_stopped(self, error: str) -> None:
         self._dry_run_button.setEnabled(True)
         self._armed_button.setEnabled(True)
         self._stop_button.setEnabled(False)
-        self._status_line.setText(
+        self._tray_start_action.setEnabled(True)
+        self._tray_stop_action.setEnabled(False)
+        stopped_text = (
             tr("monitor.stopped_with_error", error=error) if error else tr("monitor.stopped")
         )
+        self._status_line.setText(stopped_text)
+        self._tray_icon.setToolTip(f"stavau {__version__} — {stopped_text}")
         if self._monitor_thread is not None:
             self._monitor_thread.quit()
             self._monitor_thread.wait()
