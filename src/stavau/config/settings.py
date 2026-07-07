@@ -12,8 +12,11 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from platformdirs import user_config_dir, user_data_dir
+
+from stavau.core.distance import CalibrationModel
 
 APP_NAME = "stavau"
 SCHEMA_VERSION = 1
@@ -56,6 +59,12 @@ class Settings:
     integration_mqtt_username: str = ""
     integration_presence_topic: str = ""  # consume: external presence in
     integration_present_values: str = "on,home,present,occupied,true,1"
+    # Freshness bound for external presence (seconds): a "present" signal only
+    # holds the screen unlocked for this long without a fresh update. Guards the
+    # fail-open where a silently-dead sensor latches "present" forever. The HA
+    # sensor must publish at least this often (or set MQTT expire_after). 0
+    # disables the bound (restores the unbounded, fail-open behaviour — opt-out).
+    integration_presence_max_age: float = 90.0
     integration_action_topic: str = ""  # emit: lock/unlock events out
     radius_m: float = 3.0
     grace_seconds: float = 10.0
@@ -81,6 +90,26 @@ class Settings:
             raise ConfigError("breaker_max_locks must be at least 1")
         if self.breaker_window_seconds <= 0 or self.breaker_cooldown_seconds <= 0:
             raise ConfigError("breaker window/cooldown seconds must be positive")
+        # Calibration constants feed CalibrationModel, which raises a raw
+        # ValueError deep in run() for an implausible exponent — bound them here
+        # so a corrupt/hand-edited config surfaces as a handled ConfigError.
+        if not (
+            CalibrationModel.MIN_EXPONENT
+            <= self.path_loss_exponent
+            <= CalibrationModel.MAX_EXPONENT
+        ):
+            raise ConfigError(
+                f"path_loss_exponent must be between {CalibrationModel.MIN_EXPONENT} "
+                f"and {CalibrationModel.MAX_EXPONENT} - re-run calibration"
+            )
+        if not -100.0 <= self.rssi_at_1m <= 0.0:
+            raise ConfigError("rssi_at_1m must be between -100 and 0 dBm")
+        # Auto-unlock bounds are checked unconditionally so a stale bad value can
+        # never persist to a later run that re-enables the feature via config.
+        if not 0.0 < self.auto_unlock_strict_ratio <= 1.0:
+            raise ConfigError("auto_unlock_strict_ratio must be in (0, 1]")
+        if self.auto_unlock_dwell_seconds <= 0:
+            raise ConfigError("auto_unlock_dwell_seconds must be positive (anti-relay dwell)")
         if self.auto_unlock:
             # Auto-unlock is an explicit, acknowledged, bonded-only opt-in.
             if not self.auto_unlock_ack:
@@ -92,13 +121,11 @@ class Settings:
                 raise ConfigError(
                     "auto_unlock requires a paired (bonded) device — run 'stavau pair' first"
                 )
-            if not 0.0 < self.auto_unlock_strict_ratio <= 1.0:
-                raise ConfigError("auto_unlock_strict_ratio must be in (0, 1]")
-            if self.auto_unlock_dwell_seconds < 0:
-                raise ConfigError("auto_unlock_dwell_seconds must be non-negative")
         # Integration MQTT is optional; only sanity-check the port if a host is set.
         if self.integration_mqtt_host and not 1 <= self.integration_mqtt_port <= 65535:
             raise ConfigError("integration_mqtt_port must be between 1 and 65535")
+        if self.integration_presence_max_age < 0:
+            raise ConfigError("integration_presence_max_age must be non-negative (0 disables)")
 
     def save(self, path: Path | None = None) -> Path:
         target = path or config_path()
@@ -128,11 +155,40 @@ class Settings:
             ) from exc
         if not isinstance(raw, dict):
             raise ConfigError(f"configuration at {source} is malformed - re-run 'stavau setup'")
-        known = {f.name for f in dataclasses.fields(cls)}
-        data = {key: value for key, value in raw.items() if key in known}
+        known = {f.name: f for f in dataclasses.fields(cls)}
+        data = {
+            key: cls._coerce(known[key], value, source)
+            for key, value in raw.items()
+            if key in known
+        }
         try:
             return cls(**data)
         except TypeError as exc:
             raise ConfigError(
                 f"configuration at {source} has invalid values ({exc}) - re-run 'stavau setup'"
             ) from exc
+
+    @staticmethod
+    def _coerce(field: dataclasses.Field[Any], value: Any, source: Path) -> Any:
+        """Coerce a JSON value to the field's declared numeric type.
+
+        JSON has one number type, so an `int` field can arrive as a float (e.g.
+        `smoothing_window: 8.0`) and blow up a `deque(maxlen=...)` deep in the
+        pipeline. Coerce declared int/float fields here, folding a truly
+        uncoercible value into the handled ConfigError path. `field.type` is a
+        string annotation (module uses `from __future__ import annotations`).
+        """
+        # bool is a subclass of int; leave real bools untouched.
+        if isinstance(value, bool):
+            return value
+        try:
+            if field.type == "int":
+                return int(value)
+            if field.type == "float":
+                return float(value)
+        except (ValueError, TypeError) as exc:
+            raise ConfigError(
+                f"configuration at {source} has invalid '{field.name}' ({exc}) "
+                "- re-run 'stavau setup'"
+            ) from exc
+        return value
