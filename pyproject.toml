@@ -94,8 +94,8 @@ module = [
   "AppKit.*",
   "PySide6",
   "PySide6.*",
-  "paho_mqtt",
-  "paho_mqtt.*",
+  "paho",
+  "paho.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
