@@ -60,12 +60,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_setup.add_argument(
         "--strategy",
-        choices=["auto", "adv_scan", "classic_link", "adv_monitor", "gatt_link"],
+        choices=[
+            "auto",
+            "adv_scan",
+            "classic_link",
+            "adv_monitor",
+            "gatt_link",
+            "external_presence",
+        ],
         default="auto",
         help="proximity strategy: 'auto' detects it from the device (default); "
         "'classic_link' for an idle Android that does not advertise; "
         "'adv_monitor' offloads presence to the controller (Linux/BlueZ, low power); "
-        "'gatt_link' polls RSSI over a held BLE connection (macOS/Linux)",
+        "'gatt_link' polls RSSI over a held BLE connection (macOS/Linux); "
+        "'external_presence' consumes presence from MQTT/Home Assistant "
+        "(see docs/integrations.md)",
     )
     p_setup.set_defaults(func=cmd_setup)
 

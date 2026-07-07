@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Smart-home / mesh integration** (`core/integration.py`, optional `[integration]` extra, **off by default, local-LAN MQTT only**): a boundary to Home Assistant that reaches Matter, Z-Wave, Thread and Wi-Fi presence without embedding any radio stack. Two directions: consume an external presence signal as the `external_presence` proximity strategy (fail-safe — absent/unknown/lost-connection never keep the screen unlocked), and emit `locked`/`unlocked` events to an MQTT topic so home-automation routines can react (emission never affects locking). MQTT password read from `$STAVAU_MQTT_PASSWORD`, never stored. Threat-model T11; see `docs/integrations.md`. Invariant I3 refined: no network by default, this is the only opt-in, local-only exception.
+
 ## [0.3.0] - 2026-07-06
 
 The graphical milestone: a real app, richer strategies, and safe auto-unlock.

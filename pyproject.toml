@@ -37,6 +37,9 @@ macos = [
 gui = [
   "PySide6>=6.6",
 ]
+integration = [
+  "paho-mqtt>=2.0",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov",
@@ -91,6 +94,8 @@ module = [
   "AppKit.*",
   "PySide6",
   "PySide6.*",
+  "paho_mqtt",
+  "paho_mqtt.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

@@ -34,6 +34,7 @@ class Strategy(Enum):
     GATT_LINK = "gatt_link"  # RSSI over a held GATT connection (macOS/Linux)
     CLASSIC_LINK = "classic_link"  # bonded Bluetooth Classic link
     ADV_MONITOR = "adv_monitor"  # BlueZ controller-offloaded monitoring (Linux)
+    EXTERNAL_PRESENCE = "external_presence"  # presence from an MQTT source (Home Assistant etc.)
 
 
 # Strategies with a working runtime implementation. CLASSIC_LINK runs with real
@@ -42,7 +43,13 @@ class Strategy(Enum):
 # GATT_LINK holds a BLE connection and polls its RSSI on macOS (bleak) and
 # Linux (hcitool) - on Windows it falls back to adv_scan.
 IMPLEMENTED_STRATEGIES = frozenset(
-    {Strategy.ADV_SCAN, Strategy.CLASSIC_LINK, Strategy.ADV_MONITOR, Strategy.GATT_LINK}
+    {
+        Strategy.ADV_SCAN,
+        Strategy.CLASSIC_LINK,
+        Strategy.ADV_MONITOR,
+        Strategy.GATT_LINK,
+        Strategy.EXTERNAL_PRESENCE,
+    }
 )
 
 

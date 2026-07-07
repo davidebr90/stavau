@@ -7,6 +7,7 @@ this machine. Keeps the session agnostic to which channel is in use.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -15,6 +16,11 @@ from stavau.core.advmonitor import make_source as make_advmonitor_source
 from stavau.core.classic import ClassicLinkSource, select_classic_backend
 from stavau.core.deviceid import Strategy
 from stavau.core.gattlink import GattLinkSource, gattlink_supported
+from stavau.core.integration import (
+    ExternalPresenceSource,
+    make_presence_backend,
+    parse_present_values,
+)
 from stavau.core.monitor import BleProximitySource, NearbyCache, RssiTracker
 
 
@@ -42,6 +48,11 @@ def build_source(
     grace_seconds: float = 10.0,
     rssi_at_1m: float = -59.0,
     path_loss_exponent: float = 2.0,
+    mqtt_host: str = "",
+    mqtt_port: int = 1883,
+    mqtt_username: str = "",
+    presence_topic: str = "",
+    present_values_csv: str = "on,home,present,occupied,true,1",
 ) -> BuiltSource:
     """Construct the ProximitySource for `strategy`, with safe fallback.
 
@@ -50,6 +61,27 @@ def build_source(
     hcitool; reachability on Windows). If the classic backend is unavailable we
     fall back to ADV_SCAN and say so.
     """
+    if strategy == Strategy.EXTERNAL_PRESENCE.value:
+        presence_backend = make_presence_backend(
+            mqtt_host,
+            mqtt_port,
+            presence_topic,
+            parse_present_values(present_values_csv),
+            mqtt_username,
+            os.environ.get("STAVAU_MQTT_PASSWORD", ""),
+        )
+        if presence_backend is not None:
+            return BuiltSource(
+                source=ExternalPresenceSource(tracker, presence_backend),
+                effective_strategy=Strategy.EXTERNAL_PRESENCE.value,
+                note=f"external presence via MQTT topic '{presence_topic}'",
+            )
+        return BuiltSource(
+            source=BleProximitySource(address, tracker, nearby=nearby),
+            effective_strategy=Strategy.ADV_SCAN.value,
+            note="external_presence needs an MQTT host+topic; using adv_scan",
+        )
+
     if strategy == Strategy.ADV_MONITOR.value:
         if sys.platform.startswith("linux"):
             return BuiltSource(

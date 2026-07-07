@@ -83,8 +83,12 @@ These are enforced by tests and design. Any PR violating one is wrong.
   screen or a refusal to start — never a silently disabled protection.
 - **I2 — The anti-runaway guardrail is inviolable.** Locking must always pass
   through `LockCircuitBreaker`. Never add a lock path that bypasses it.
-- **I3 — No network. Ever.** Zero outbound traffic by default; any future
-  diagnostic upload is opt-in, explicit, documented, and off by default.
+- **I3 — No network by default.** Zero outbound/inbound traffic unless the user
+  explicitly opts in. The only network feature is the smart-home integration
+  (`core/integration.py`): off by default, local-LAN MQTT only, no cloud, no
+  telemetry, and fail-safe (external presence can never prevent a lock). Any
+  future network feature must likewise be opt-in, explicit, documented, off by
+  default, and local-only. Telemetry specifically remains **never**.
 - **I4 — OS specifics stay behind interfaces.** New OS/channel code goes in a
   `platform/*` locker or a `ProximitySource`/`ClassicBackend`. Core stays
   platform-agnostic and unit-testable without radios.

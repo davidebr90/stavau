@@ -20,6 +20,7 @@ no observer existed (invariant I1).
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from stavau.core.autounlock import AutoUnlockConfig, AutoUnlockPolicy
 from stavau.core.breaker import BreakerConfig, LockCircuitBreaker
 from stavau.core.distance import CalibrationModel
 from stavau.core.events import EventLog
+from stavau.core.integration import IntegrationNotifier, make_notifier
 from stavau.core.monitor import NearbyCache, RssiTracker
 from stavau.core.presence import PresenceConfig, PresenceMachine, PresenceState
 from stavau.core.radiostate import radio_available
@@ -89,6 +91,11 @@ class MonitorSession:
             grace_seconds=settings.grace_seconds,
             rssi_at_1m=settings.rssi_at_1m,
             path_loss_exponent=settings.path_loss_exponent,
+            mqtt_host=settings.integration_mqtt_host,
+            mqtt_port=settings.integration_mqtt_port,
+            mqtt_username=settings.integration_mqtt_username,
+            presence_topic=settings.integration_presence_topic,
+            present_values_csv=settings.integration_present_values,
         )
         self._source = built.source
         self._effective_strategy = built.effective_strategy
@@ -103,6 +110,15 @@ class MonitorSession:
         self._radio_state: bool | None = None
         self._radio_off_reported = False
         self._ticks_since_radio_check = 0
+        # Smart-home action sink: publishes lock/unlock events (NullNotifier when
+        # unconfigured, so call sites never branch). Emission never affects locking.
+        self._notifier: IntegrationNotifier = make_notifier(
+            settings.integration_mqtt_host,
+            settings.integration_mqtt_port,
+            settings.integration_action_topic,
+            settings.integration_mqtt_username,
+            os.environ.get("STAVAU_MQTT_PASSWORD", ""),
+        )
         # Auto-unlock (advanced, off by default). Enabled only when the config
         # opts in AND the OS exposes a safe unlock (Linux). On an unsupported
         # platform the policy stays None and the feature refuses to run.
@@ -290,6 +306,7 @@ class MonitorSession:
                 await _sleep(1.0)
         finally:
             await self._source.stop()
+            self._notifier.close()
             if self._observer is not None:
                 # Advisory-only resource: a failing close must not mask shutdown.
                 with contextlib.suppress(Exception):
@@ -324,6 +341,7 @@ class MonitorSession:
             self._log.append("auto_unlock_failed", error=str(exc))
             return
         self._log.append("auto_unlock_triggered")
+        self._notifier.notify("unlocked")
 
     def _trigger_lock(self) -> bool:
         if self._locker is None:
@@ -336,6 +354,7 @@ class MonitorSession:
             self._log.append("lock_failed", error=str(exc))
             return False
         self._log.append("lock_triggered", dry_run=False)
+        self._notifier.notify("locked")
         return True
 
 

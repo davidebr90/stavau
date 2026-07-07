@@ -48,6 +48,15 @@ class Settings:
     auto_unlock_ack: bool = False  # explicit risk acknowledgement, required to enable
     auto_unlock_strict_ratio: float = 0.5  # must be within radius*ratio (stricter than lock)
     auto_unlock_dwell_seconds: float = 5.0  # continuously, before unlocking (anti-relay)
+    # Smart-home integration (optional, off by default; local-network MQTT to
+    # Home Assistant etc.). Empty host/topic => inert, no network I/O (I3). The
+    # MQTT password is never stored here — read from $STAVAU_MQTT_PASSWORD.
+    integration_mqtt_host: str = ""
+    integration_mqtt_port: int = 1883
+    integration_mqtt_username: str = ""
+    integration_presence_topic: str = ""  # consume: external presence in
+    integration_present_values: str = "on,home,present,occupied,true,1"
+    integration_action_topic: str = ""  # emit: lock/unlock events out
     radius_m: float = 3.0
     grace_seconds: float = 10.0
     return_seconds: float = 3.0
@@ -87,6 +96,9 @@ class Settings:
                 raise ConfigError("auto_unlock_strict_ratio must be in (0, 1]")
             if self.auto_unlock_dwell_seconds < 0:
                 raise ConfigError("auto_unlock_dwell_seconds must be non-negative")
+        # Integration MQTT is optional; only sanity-check the port if a host is set.
+        if self.integration_mqtt_host and not 1 <= self.integration_mqtt_port <= 65535:
+            raise ConfigError("integration_mqtt_port must be between 1 and 65535")
 
     def save(self, path: Path | None = None) -> Path:
         target = path or config_path()

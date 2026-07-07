@@ -38,6 +38,8 @@
 - Precise indoor positioning. RSSI gives a noisy distance *estimate*, good enough for a 1–10 m threshold with hysteresis — not for localization.
 - Replacing OS authentication in any form.
 
+| T11 | **Smart-home integration exposure** (optional MQTT boundary to Home Assistant, off by default) | Presence/lock state leaves the process onto the LAN; a compromised broker could feed false presence or read lock/unlock timing | Low, and opt-in only | Off by default; only ever connects to a broker the user configures, on the **local network** (no cloud, no telemetry — I3 holds: zero network unless explicitly enabled). MQTT password read from `$STAVAU_MQTT_PASSWORD`, never stored in config. **Presence in is fail-safe (I1):** an external "present" can only *keep* the screen unlocked while positively asserted; absent / unknown / lost connection all let the normal staleness lock fire — a malicious broker cannot prevent a lock, only (if trusted for auto-unlock) contribute to an unlock, which inherits T9's constraints. **Event emission cannot affect locking** (the notifier swallows all errors). See [docs/integrations.md](integrations.md). |
+
 ## Telemetry policy
 
 None by default, forever. If an opt-in diagnostic upload is ever added, it must be: explicit (off by default), documented in README + privacy section, reviewable (plain-text payload preview before send), and stripped of identifiers.
