@@ -3,6 +3,12 @@
 Privacy constraints (see docs/threat-model.md, T7): local file with per-user
 permissions, size-capped rotation, no device identifiers beyond the
 user-chosen alias, one-command purge.
+
+Single-writer contract: exactly one process — the ``stavau run`` daemon — ever
+appends; every other component (``status``, ``log``, the tray/GUI) only *reads*
+via ``tail()``. Rotation is a check-then-act (size probe, then ``replace``), so
+concurrent appenders are unsupported and could clobber a just-rotated file; the
+reader already tolerates torn writes. Do not point two live daemons at one log.
 """
 
 from __future__ import annotations
@@ -14,6 +20,17 @@ from pathlib import Path
 from typing import Any
 
 MAX_LOG_BYTES = 1_000_000
+
+# Per-value cap on serialized detail strings: an unbounded str(exc) (a giant
+# stack repr, a garbled MQTT/BLE payload) could otherwise dominate the rotation
+# budget and evict real history.
+MAX_DETAIL_CHARS = 500
+
+
+def _truncate_detail(value: Any) -> Any:
+    if isinstance(value, str) and len(value) > MAX_DETAIL_CHARS:
+        return value[:MAX_DETAIL_CHARS] + "…(truncated)"
+    return value
 
 
 @dataclass(frozen=True)
@@ -38,7 +55,7 @@ class EventLog:
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "event": event,
-            "detail": detail,
+            "detail": {key: _truncate_detail(value) for key, value in detail.items()},
         }
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")

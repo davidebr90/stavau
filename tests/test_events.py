@@ -1,9 +1,23 @@
 from pathlib import Path
 
-from stavau.core.events import EventLog
+from stavau.core.events import MAX_DETAIL_CHARS, EventLog
 
 
 class TestEventLog:
+    def test_oversized_detail_string_is_truncated(self, tmp_path: Path) -> None:
+        # Finding 14: an unbounded str(exc) must not dominate the log budget.
+        log = EventLog(tmp_path / "events.jsonl")
+        log.append("lock_failed", error="A" * 100_000, code=7)
+        record = log.tail(1)[0]
+        assert len(record.detail["error"]) <= MAX_DETAIL_CHARS + len("…(truncated)")
+        assert record.detail["error"].endswith("…(truncated)")
+        assert record.detail["code"] == 7  # non-string values untouched
+
+    def test_short_detail_string_is_not_truncated(self, tmp_path: Path) -> None:
+        log = EventLog(tmp_path / "events.jsonl")
+        log.append("x", error="brief")
+        assert log.tail(1)[0].detail["error"] == "brief"
+
     def test_append_and_tail_roundtrip(self, tmp_path: Path) -> None:
         log = EventLog(tmp_path / "events.jsonl")
         log.append("monitor_started", device="phone", dry_run=True)
