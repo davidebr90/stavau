@@ -52,6 +52,32 @@ class TestLinuxProbe:
         monkeypatch.setattr(radiostate, "_run", fake_run)
         assert asyncio.run(radiostate._linux_radio_available()) is False
 
+    def test_any_powered_controller_reports_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Finding 15: multi-adapter output where the first controller is off but
+        # another is on must not be mislabeled "off".
+        monkeypatch.setattr(radiostate.shutil, "which", lambda name: "/usr/bin/bluetoothctl")
+
+        async def fake_run(cmd: list[str], timeout: float) -> tuple[int, str]:
+            return 0, (
+                "Controller AA:BB:CC:DD:EE:FF\n\tPowered: no\n"
+                "Controller 11:22:33:44:55:66\n\tPowered: yes\n"
+            )
+
+        monkeypatch.setattr(radiostate, "_run", fake_run)
+        assert asyncio.run(radiostate._linux_radio_available()) is True
+
+    def test_all_controllers_off_reports_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(radiostate.shutil, "which", lambda name: "/usr/bin/bluetoothctl")
+
+        async def fake_run(cmd: list[str], timeout: float) -> tuple[int, str]:
+            return 0, (
+                "Controller AA:BB:CC:DD:EE:FF\n\tPowered: no\n"
+                "Controller 11:22:33:44:55:66\n\tPowered: no\n"
+            )
+
+        monkeypatch.setattr(radiostate, "_run", fake_run)
+        assert asyncio.run(radiostate._linux_radio_available()) is False
+
     def test_missing_bluetoothctl_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(radiostate.shutil, "which", lambda name: None)
 

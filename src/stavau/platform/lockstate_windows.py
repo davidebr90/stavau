@@ -50,6 +50,17 @@ NOTIFY_FOR_THIS_SESSION = 0
 CW_USEDEFAULT = 0x80000000
 
 
+def _window_class_name(token: int) -> str:
+    """Per-instance window-class name.
+
+    ``RegisterClassW`` fails with ``ERROR_CLASS_ALREADY_EXISTS`` on a duplicate
+    class name; a second observer sharing one fixed name would then run against
+    the first's registration and cross-wire session callbacks. Deriving the name
+    from a per-instance token (``id(self)``) keeps every observer's class unique.
+    """
+    return f"StavauLockStateWindow_{token:x}"
+
+
 class WindowsLockStateObserver:
     """Lock-state observer backed by WTS session notifications.
 
@@ -252,7 +263,7 @@ class WindowsLockStateObserver:
 
             user32.RegisterClassW.restype = wintypes.ATOM
 
-            class_name = "StavauLockStateWindow"
+            class_name = _window_class_name(id(self))
             hinstance = kernel32.GetModuleHandleW(None)
 
             wndclass = WNDCLASS()
@@ -267,7 +278,12 @@ class WindowsLockStateObserver:
             wndclass.lpszMenuName = None
             wndclass.lpszClassName = class_name
 
-            user32.RegisterClassW(ctypes.byref(wndclass))
+            if not user32.RegisterClassW(ctypes.byref(wndclass)):
+                # A per-instance class name means this should not collide, but a
+                # zero ATOM is a real registration failure — fail cleanly.
+                ok.clear()
+                ready.set()
+                return
 
             hwnd = user32.CreateWindowExW(
                 0,
@@ -311,7 +327,17 @@ class WindowsLockStateObserver:
                 wtsapi32.WTSUnRegisterSessionNotification(hwnd)
             with contextlib.suppress(Exception):
                 user32.DestroyWindow(hwnd)
+            self._hwnd = None
         except Exception:
+            # A failure after the window/registration were created must not leak
+            # them: a live WTS registration against a destroyed HWND can misroute
+            # later notifications. Clean up whatever exists (guarded — the names
+            # only exist if we got that far).
+            with contextlib.suppress(Exception):
+                if self._hwnd:
+                    wtsapi32.WTSUnRegisterSessionNotification(self._hwnd)
+                    user32.DestroyWindow(self._hwnd)
+            self._hwnd = None
             ok.clear()
             ready.set()
 

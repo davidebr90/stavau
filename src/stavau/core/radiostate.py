@@ -25,6 +25,7 @@ check + availability probe + import inside the async function):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import shutil
 import sys
@@ -86,10 +87,15 @@ async def _linux_radio_available() -> bool | None:
         return None
     if rc != 0:
         return None
-    match = _POWERED_RE.search(out)
-    if match is None:
+    powered = _POWERED_RE.findall(out)
+    if not powered:
         return None
-    return match.group(1).lower() == "yes"
+    # Multi-adapter hosts can list more than one controller; `bluetoothctl show`
+    # picks the default, which may not be the adapter bleak scans with. Bias
+    # toward "on" — if ANY reported controller is powered, the radio is not off,
+    # so we never mislabel "phone left" as "radio off" (this flag is a reason
+    # string only; the fail-safe lock is unchanged either way).
+    return any(value.lower() == "yes" for value in powered)
 
 
 async def _run(cmd: list[str], timeout: float) -> tuple[int, str]:
@@ -108,6 +114,8 @@ async def _run(cmd: list[str], timeout: float) -> tuple[int, str]:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        await proc.wait()
+        # Bound the post-kill wait so a wedged child never hangs the probe.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
         return 1, ""
     return proc.returncode or 0, stdout.decode(errors="replace")

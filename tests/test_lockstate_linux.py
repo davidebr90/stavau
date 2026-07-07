@@ -19,6 +19,7 @@ from stavau.platform import lockstate_linux as lsl
 from stavau.platform.lockstate_linux import (
     LinuxLockStateObserver,
     _parse_locked_hint,
+    _session_id_from_env,
     make_observer,
 )
 
@@ -272,6 +273,39 @@ class TestClose:
             return observer.current()
 
         assert asyncio.run(drive()) is True
+
+    def test_close_without_running_loop_disconnects_and_silences_signals(self) -> None:
+        # Finding 26: close() called outside any running loop must still
+        # disconnect the bus (no leak) and drop subscribers so a late signal
+        # cannot invoke a stale callback or mutate state.
+        proxy = FakeSessionProxy(initial=False)
+        observer = LinuxLockStateObserver(session_proxy_factory=lambda: proxy)
+        seen: list[bool] = []
+        observer.subscribe(seen.append)
+
+        async def connect() -> None:
+            observer.current()
+            await _settle()
+
+        asyncio.run(connect())  # seeds state False, notifies seen=[False]
+        observer.close()  # <-- no running loop here
+        assert proxy.disconnected is True  # bus disconnected, not leaked
+        proxy.fire_lock()  # a late signal after close
+        assert observer.current() is False  # state not mutated post-close
+        assert seen == [False]  # stale subscriber never invoked again
+
+
+class TestSessionIdFromEnv:
+    def test_returns_id_when_present(self) -> None:
+        assert _session_id_from_env({"XDG_SESSION_ID": "3"}) == "3"
+
+    def test_missing_raises_descriptive_error(self) -> None:
+        with pytest.raises(RuntimeError, match="XDG_SESSION_ID"):
+            _session_id_from_env({})
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            _session_id_from_env({"XDG_SESSION_ID": ""})
 
 
 class TestMakeObserver:

@@ -55,10 +55,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
+
+_log = logging.getLogger(__name__)
 
 _BUS_NAME = "org.freedesktop.login1"
 _MANAGER_PATH = "/org/freedesktop/login1"
@@ -150,24 +153,40 @@ class LinuxLockStateObserver:
     def close(self) -> None:
         """Cancel the background task and disconnect. Idempotent, never raises."""
         self._closed = True
+        # Drop subscribers first: a signal that arrives during/after teardown
+        # must never invoke a stale callback on a closed observer.
+        self._subscribers.clear()
         if self._task is not None:
             self._task.cancel()
             self._task = None
         proxy = self._proxy
         self._proxy = None
-        if proxy is not None:
+        if proxy is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            loop.create_task(_disconnect_quietly(proxy))
+        else:
+            # No running loop to schedule the async disconnect on (shutdown
+            # ordering, a signal handler, or a test): run it to completion
+            # best-effort so the system-bus connection is not leaked.
             with contextlib.suppress(Exception):
-                loop = asyncio.get_running_loop()
-                loop.create_task(_disconnect_quietly(proxy))
+                asyncio.run(_disconnect_quietly(proxy))
 
     async def _connect_and_listen(self) -> None:
         try:
             factory = self._session_proxy_factory or _default_session_proxy_factory
             proxy = await _call_factory(factory)
             initial = await proxy.get_locked_hint()
-        except Exception:
+        except Exception as exc:
             # Any bus error, timeout, or malformed reply degrades to unknown
-            # and must never propagate (invariant I1).
+            # and must never propagate (invariant I1). Log once (this task runs
+            # a single time) so a permanently-unknown observer is diagnosable
+            # rather than indistinguishable from a working, idle one.
+            _log.debug("lock-state observer unavailable, staying 'unknown': %s", exc)
             self._state = None
             return
         self._proxy = proxy
@@ -190,12 +209,32 @@ class LinuxLockStateObserver:
             proxy.on_unlock(on_unlock)
 
     def _set_state(self, value: bool | None) -> None:
+        if self._closed:
+            # A late signal must not mutate state or notify after close.
+            return
         self._state = value
         if value is None:
             return
         for cb in list(self._subscribers):
             with contextlib.suppress(Exception):
                 cb(value)
+
+
+def _session_id_from_env(environ: Mapping[str, str]) -> str:
+    """Read XDG_SESSION_ID, raising a clear error when it is absent.
+
+    Using ``environ["XDG_SESSION_ID"]`` directly raises a bare ``KeyError`` in a
+    headless/re-parented session (no ``PAMName``), which is opaque; this raises a
+    descriptive ``RuntimeError`` instead. The caller degrades it to unknown
+    (invariant I1), and it is logged once in ``_connect_and_listen``.
+    """
+    session_id = environ.get("XDG_SESSION_ID")
+    if not session_id:
+        raise RuntimeError(
+            "cannot resolve the logind session: GetSessionByPID failed and "
+            "XDG_SESSION_ID is unset (headless or re-parented process?)"
+        )
+    return session_id
 
 
 async def _call_factory(factory: Callable[[], Any]) -> _SessionProxyLike:
@@ -257,7 +296,7 @@ class _DbusFastSessionProxy:
             path: str = await manager_iface.call_get_session_by_pid(os.getpid())
             return path
         except Exception:
-            session_id = os.environ["XDG_SESSION_ID"]
+            session_id = _session_id_from_env(os.environ)
             path = await manager_iface.call_get_session(session_id)
             return path
 

@@ -19,8 +19,22 @@ from stavau.platform.lockstate_windows import (
     WTS_SESSION_LOCK,
     WTS_SESSION_UNLOCK,
     WindowsLockStateObserver,
+    _window_class_name,
     make_observer,
 )
+
+
+class TestWindowClassName:
+    def test_distinct_tokens_yield_distinct_names(self) -> None:
+        # Two observers must not share a window-class name (RegisterClassW would
+        # fail with ERROR_CLASS_ALREADY_EXISTS on the second and cross-wire it).
+        a = WindowsLockStateObserver()
+        b = WindowsLockStateObserver()
+        assert _window_class_name(id(a)) != _window_class_name(id(b))
+
+    def test_same_token_is_stable(self) -> None:
+        assert _window_class_name(42) == _window_class_name(42)
+        assert _window_class_name(42).startswith("StavauLockStateWindow_")
 
 
 class TestHandleSessionChange:
