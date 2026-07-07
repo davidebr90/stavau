@@ -52,6 +52,14 @@ optional, local-only dependency (`paho-mqtt`) reaches the whole mesh world.
 3. Presence values counted as "present" are configurable
    (`integration_present_values`, default `on,home,present,occupied,true,1`).
 4. For presence in, select the `external_presence` strategy.
+5. **Freshness:** a "present" message is a latch, so stavau only trusts it for
+   `integration_presence_max_age` seconds (default **90**) without a fresh
+   update — otherwise a crashed sensor or a retained stale `on` would hold the
+   screen unlocked forever. Your HA sensor must therefore **republish presence
+   at least that often** (most occupancy/mmWave/person entities do; a bare
+   change-only `binary_sensor` does not — give it a periodic update or an MQTT
+   `expire_after`, or raise `integration_presence_max_age`). Set it to `0` to
+   disable the bound and accept the unbounded behaviour.
 
 ### Home Assistant example
 

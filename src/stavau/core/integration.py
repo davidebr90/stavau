@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -180,10 +181,19 @@ class MqttPresenceBackend:
 class ExternalPresenceSource:
     """``ProximitySource`` driven by a ``PresenceBackend``.
 
-    On each poll tick, if the latest presence is True we push ``PRESENT_RSSI_DBM``
-    into the tracker (a strong "near" reading); otherwise we push nothing and let
-    the tracker's staleness carry the fail-safe (the session locks). This is a
-    binary presence channel with no distance information of its own.
+    On each poll tick, if the latest presence is True *and still fresh* we push
+    ``PRESENT_RSSI_DBM`` into the tracker (a strong "near" reading); otherwise we
+    push nothing and let the tracker's staleness carry the fail-safe (the session
+    locks). This is a binary presence channel with no distance information of its
+    own.
+
+    Freshness (``max_age``) closes a fail-open: a "present" signal is a *latch*,
+    so a silently-dead sensor (crashed integration, retained stale ``on``, person
+    gone but no ``off`` ever published) would otherwise hold the screen unlocked
+    forever while the TCP link stays up. A present signal therefore only counts
+    for ``max_age`` seconds without a fresh update; the Home Assistant sensor must
+    republish at least that often (or use MQTT ``expire_after``). ``max_age <= 0``
+    disables the bound and restores the old unbounded behaviour (explicit opt-out).
 
     ``retarget`` is a deliberate no-op: an external presence sensor is not bound
     to a Bluetooth address — it reports the presence of *a* trusted person, and
@@ -196,12 +206,17 @@ class ExternalPresenceSource:
         backend: PresenceBackend,
         poll_interval: float = 2.0,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        max_age: float = 0.0,
+        now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._tracker = tracker
         self._backend = backend
         self._poll_interval = poll_interval
         self._sleep = sleep
+        self._max_age = max_age
+        self._now = now
         self._present: bool | None = None
+        self._present_at: float = 0.0
         self._task: asyncio.Task[None] | None = None
 
     def retarget(self, address: str) -> None:
@@ -209,6 +224,15 @@ class ExternalPresenceSource:
 
     def _on_present(self, present: bool | None) -> None:
         self._present = present
+        if present is True:
+            # Stamp the arrival time so the freshness window measures from the
+            # last *positive* update, not from the first one ever received.
+            self._present_at = self._now()
+
+    def _is_fresh(self, now: float) -> bool:
+        if self._max_age <= 0:
+            return True  # bound disabled (opt-out)
+        return now - self._present_at <= self._max_age
 
     async def start(self) -> None:
         await self._backend.start(self._on_present)
@@ -223,13 +247,13 @@ class ExternalPresenceSource:
         await self._backend.stop()
 
     async def _poll_loop(self) -> None:
-        import time
-
         while True:
-            if self._present is True:
-                # Present -> synthesize a near RSSI. Absent/unknown -> push
-                # nothing so staleness drives the fail-safe (invariant I1).
-                self._tracker.push(PRESENT_RSSI_DBM, time.monotonic())
+            now = self._now()
+            if self._present is True and self._is_fresh(now):
+                # Present *and fresh* -> synthesize a near RSSI. Absent, unknown,
+                # or a stale latch -> push nothing so staleness drives the
+                # fail-safe (invariant I1).
+                self._tracker.push(PRESENT_RSSI_DBM, now)
             await self._sleep(self._poll_interval)
 
 

@@ -53,6 +53,7 @@ def build_source(
     mqtt_username: str = "",
     presence_topic: str = "",
     present_values_csv: str = "on,home,present,occupied,true,1",
+    presence_max_age: float = 0.0,
 ) -> BuiltSource:
     """Construct the ProximitySource for `strategy`, with safe fallback.
 
@@ -72,7 +73,9 @@ def build_source(
         )
         if presence_backend is not None:
             return BuiltSource(
-                source=ExternalPresenceSource(tracker, presence_backend),
+                source=ExternalPresenceSource(
+                    tracker, presence_backend, max_age=presence_max_age
+                ),
                 effective_strategy=Strategy.EXTERNAL_PRESENCE.value,
                 note=f"external presence via MQTT topic '{presence_topic}'",
             )

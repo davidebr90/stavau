@@ -276,6 +276,97 @@ class TestExternalPresenceSource:
         source = ExternalPresenceSource(FakeTracker(), ScriptedBackend())
         source.retarget("AA:BB:CC:DD:EE:FF")  # must not raise or change behaviour
 
+    def test_stale_presence_stops_pushing_fail_safe(self) -> None:
+        # A silently-dead sensor latches True but sends no fresh update. After
+        # max_age the source must STOP pushing so the tracker goes stale and the
+        # screen locks (invariant I1) — never hold it unlocked forever.
+        tracker = FakeTracker()
+        backend = ScriptedBackend()
+        clock = {"t": 0.0}
+        source = ExternalPresenceSource(
+            tracker,
+            backend,
+            poll_interval=0.0,
+            sleep=ImmediateSleep(),
+            max_age=10.0,
+            now=lambda: clock["t"],
+        )
+
+        async def run() -> tuple[int, int]:
+            await source.start()
+            await asyncio.sleep(0)
+            backend.emit(True)  # present at t=0
+            await asyncio.sleep(0.02)  # fresh: pushes happen
+            clock["t"] = 100.0  # sensor goes silent, now well past max_age
+            await asyncio.sleep(0.02)  # let stale ticks run
+            stale_start = len(tracker.pushed)
+            await asyncio.sleep(0.02)
+            after = len(tracker.pushed)
+            await source.stop()
+            return stale_start, after
+
+        stale_start, after = asyncio.run(run())
+        assert stale_start > 0  # the fresh phase did push
+        assert after == stale_start  # stale presence pushes nothing more
+
+    def test_refreshed_presence_keeps_pushing(self) -> None:
+        # A live sensor that keeps re-publishing "present" stays inside the
+        # freshness window and continues to hold the screen unlocked.
+        tracker = FakeTracker()
+        backend = ScriptedBackend()
+        clock = {"t": 0.0}
+        source = ExternalPresenceSource(
+            tracker,
+            backend,
+            poll_interval=0.0,
+            sleep=ImmediateSleep(),
+            max_age=10.0,
+            now=lambda: clock["t"],
+        )
+
+        async def run() -> int:
+            await source.start()
+            await asyncio.sleep(0)
+            backend.emit(True)  # present at t=0
+            await asyncio.sleep(0.02)
+            clock["t"] = 8.0  # still within max_age
+            backend.emit(True)  # fresh re-publish resets the clock
+            await asyncio.sleep(0.02)
+            count = len(tracker.pushed)
+            await source.stop()
+            return count
+
+        count = asyncio.run(run())
+        assert count > 0
+
+    def test_max_age_zero_disables_bound(self) -> None:
+        # max_age=0 restores the unbounded behaviour (explicit opt-out).
+        tracker = FakeTracker()
+        backend = ScriptedBackend()
+        clock = {"t": 0.0}
+        source = ExternalPresenceSource(
+            tracker,
+            backend,
+            poll_interval=0.0,
+            sleep=ImmediateSleep(),
+            max_age=0.0,
+            now=lambda: clock["t"],
+        )
+
+        async def run() -> int:
+            await source.start()
+            await asyncio.sleep(0)
+            backend.emit(True)
+            await asyncio.sleep(0.02)
+            clock["t"] = 10_000.0  # ancient, but the bound is disabled
+            await asyncio.sleep(0.02)
+            count = len(tracker.pushed)
+            await source.stop()
+            return count
+
+        count = asyncio.run(run())
+        assert count > 0
+
 
 # ----------------------------------------------------------------- MqttNotifier
 

@@ -96,6 +96,7 @@ class MonitorSession:
             mqtt_username=settings.integration_mqtt_username,
             presence_topic=settings.integration_presence_topic,
             present_values_csv=settings.integration_present_values,
+            presence_max_age=settings.integration_presence_max_age,
         )
         self._source = built.source
         self._effective_strategy = built.effective_strategy
