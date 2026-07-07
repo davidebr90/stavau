@@ -34,6 +34,11 @@ pipx install .
 
 # To include the optional system-tray UI (pystray + Pillow):
 pipx install ".[tray]"
+
+# For the graphical app (`stavau gui`, PySide6/Qt) and/or MQTT smart-home
+# integration, add those extras — the GUI is only available this way, not in
+# the prebuilt bundles below:
+pipx install ".[tray,gui,integration]"
 ```
 
 Verify it works:
@@ -211,7 +216,7 @@ You don't need to wait for a release to try the PyInstaller bundle — it
 builds locally on any platform with Python 3.12:
 
 ```bash
-pip install ".[tray]" pyinstaller
+pip install ".[tray,integration]" pyinstaller
 cd packaging
 pyinstaller stavau.spec --distpath ../dist --workpath ../build --noconfirm
 ../dist/stavau/stavau --version    # or dist\stavau\stavau.exe on Windows
@@ -219,5 +224,7 @@ pyinstaller stavau.spec --distpath ../dist --workpath ../build --noconfirm
 
 See [`.github/workflows/release.yml`](../.github/workflows/release.yml) for
 the exact commands used in CI, and [`packaging/stavau.spec`](../packaging/stavau.spec)
-for the PyInstaller configuration (one-folder mode, `pystray`/`Pillow`
-hidden-imports for the tray backends, tests excluded).
+for the PyInstaller configuration (one-folder mode, `pystray`/`Pillow`/`paho`
+hidden-imports, tests excluded). The bundle is CLI + tray + MQTT integration;
+the PySide6 GUI is intentionally not bundled (Qt is large) — install it via
+`pipx install "stavau[gui]"`.

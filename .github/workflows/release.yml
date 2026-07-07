@@ -37,7 +37,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install build dependencies
-        run: pip install ".[tray]" pyinstaller
+        # [integration] (paho-mqtt) is bundled; [gui] (PySide6/Qt) is not — the
+        # frozen bundle is CLI + tray + MQTT, and the GUI ships via pip/pipx.
+        run: pip install ".[tray,integration]" pyinstaller
 
       - name: Build one-folder bundle
         working-directory: packaging
