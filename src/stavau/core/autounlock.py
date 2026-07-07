@@ -49,24 +49,38 @@ class AutoUnlockConfig:
     dwell_seconds: float = 5.0
     # Auto-unlock requires bonding; an unbonded advertisement id is spoofable.
     require_paired: bool = True
+    # A stavau lock we expect must be *observed* within this window, otherwise the
+    # observed lock is treated as foreign. Without this bound a stavau lock that is
+    # never observed (missed edge, or a lock action that silently no-ops) would
+    # leave the expectation latched, and a much later manual Win+L would then be
+    # misclassified as ours and become auto-unlockable — a T9 fail-open.
+    expect_window_seconds: float = 5.0
 
     def validate(self) -> None:
         if not 0.0 < self.strict_ratio <= 1.0:
             raise ValueError("auto_unlock strict_ratio must be in (0, 1]")
-        if self.dwell_seconds < 0:
-            raise ValueError("auto_unlock dwell_seconds must be non-negative")
+        if self.dwell_seconds <= 0:
+            # The dwell is the anti-relay gate on the riskiest feature; a zero
+            # dwell would allow an unlock on the very next in-range tick.
+            raise ValueError("auto_unlock dwell_seconds must be positive")
+        if self.expect_window_seconds <= 0:
+            raise ValueError("auto_unlock expect_window_seconds must be positive")
 
 
 class AutoUnlockPolicy:
     """Tracks lock origin + proximity dwell and decides when unlocking is allowed.
 
     Wiring contract (the session must honour all of these):
-      * call `note_stavau_lock()` right after stavau's own lock action succeeds;
-      * call `note_lock_observed(is_locked)` every tick with the real observed
-        lock state (from the lock-state observer) — this is what distinguishes a
-        stavau lock from a foreign one and detects unlocks;
+      * call `note_stavau_lock(now)` right after stavau's own lock action
+        succeeds;
+      * call `note_lock_observed(is_locked, now)` every tick with the real
+        observed lock state (from the lock-state observer) — this is what
+        distinguishes a stavau lock from a foreign one and detects unlocks;
       * call `decide(distance, radius_m, is_paired, now)` each tick and, only if
         it returns True, perform the actual unlock.
+
+    `now` is a monotonic timestamp shared with `decide`; it bounds how long a
+    pending stavau-lock expectation stays valid (see `expect_window_seconds`).
     """
 
     def __init__(self, config: AutoUnlockConfig) -> None:
@@ -74,17 +88,23 @@ class AutoUnlockPolicy:
         self._cfg = config
         self._origin = LockOrigin.UNLOCKED
         self._expecting_own_lock = False
+        self._expecting_since = 0.0
         self._close_since: float | None = None
 
     @property
     def origin(self) -> LockOrigin:
         return self._origin
 
-    def note_stavau_lock(self) -> None:
-        """stavau just issued a lock. The next observed 'locked' is ours."""
-        self._expecting_own_lock = True
+    def note_stavau_lock(self, now: float) -> None:
+        """stavau just issued a lock. The next observed 'locked' is ours —
 
-    def note_lock_observed(self, is_locked: bool | None) -> None:
+        but only if it is observed within `expect_window_seconds`; a stale
+        expectation must not capture a later foreign lock (T9).
+        """
+        self._expecting_own_lock = True
+        self._expecting_since = now
+
+    def note_lock_observed(self, is_locked: bool | None, now: float) -> None:
         """Feed the observed screen-lock state to classify the lock's origin.
 
         None (unknown) is treated conservatively: it never promotes a lock to
@@ -94,9 +114,14 @@ class AutoUnlockPolicy:
         """
         if is_locked is True:
             if self._origin is LockOrigin.UNLOCKED:
-                # A fresh lock. Classify it by whether we caused it.
-                self._origin = LockOrigin.STAVAU if self._expecting_own_lock else LockOrigin.FOREIGN
-            # A lock we were expecting has now been observed; consume the flag.
+                # A fresh lock. It is ours only if we were expecting one AND it
+                # arrived promptly; a stale expectation decays to 'foreign'.
+                expected = (
+                    self._expecting_own_lock
+                    and now - self._expecting_since <= self._cfg.expect_window_seconds
+                )
+                self._origin = LockOrigin.STAVAU if expected else LockOrigin.FOREIGN
+            # Expectation is single-shot: consume it whether or not it applied.
             self._expecting_own_lock = False
         elif is_locked is False:
             # Screen is unlocked again: reset everything to a clean slate.
@@ -128,7 +153,10 @@ class AutoUnlockPolicy:
             self._close_since = None
             return False
         # Within the strict threshold: require it continuously for the dwell.
+        # The arming tick only *starts* the clock — it can never itself satisfy
+        # the dwell (guarantees at least one full interval of distinct in-range
+        # observations, and removes the identical-branch trap).
         if self._close_since is None:
             self._close_since = now
-            return now - self._close_since >= self._cfg.dwell_seconds
+            return False
         return now - self._close_since >= self._cfg.dwell_seconds

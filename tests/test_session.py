@@ -257,7 +257,7 @@ def _drive_autounlock(
         auto_unlock=True,
         auto_unlock_ack=True,
         auto_unlock_strict_ratio=0.5,
-        auto_unlock_dwell_seconds=0.0,
+        auto_unlock_dwell_seconds=1.0,
     )
     unlocker = _LinkedUnlocker(screen)
     monkeypatch.setattr(session_mod, "get_unlocker", lambda: unlocker)

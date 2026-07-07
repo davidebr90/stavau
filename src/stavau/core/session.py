@@ -200,7 +200,7 @@ class MonitorSession:
                     # Feed the observed lock state so the policy can distinguish
                     # stavau's own lock from a manual one (never auto-unlock the
                     # latter — threat-model T9).
-                    self._autounlock.note_lock_observed(screen_locked)
+                    self._autounlock.note_lock_observed(screen_locked, now)
                 rssi = self._tracker.smoothed(now)
                 distance = self._model.distance_m(rssi) if rssi is not None else None
 
@@ -268,7 +268,7 @@ class MonitorSession:
                             if self._autounlock is not None:
                                 # This lock is ours: arm auto-unlock for it (and
                                 # only it) once the observer confirms it locked.
-                                self._autounlock.note_stavau_lock()
+                                self._autounlock.note_stavau_lock(now)
                             if self._breaker.register_lock(now):
                                 self._log.append(
                                     "breaker_tripped",
