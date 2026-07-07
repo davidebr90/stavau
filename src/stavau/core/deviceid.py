@@ -82,6 +82,12 @@ class Classification:
 
 
 def classify(obs: Observation) -> Classification:
+    # Precedence is first-match-wins in this exact order: Apple, Android
+    # (Samsung/Google), Microsoft, fitness wearable, then generic/unknown. Order
+    # matters only for the rare advertisement that carries more than one vendor
+    # company id (e.g. a nearby unrelated device briefly captured in the same
+    # probe); keep the most-specific personal-device vendors first. When adding a
+    # new vendor, place it deliberately rather than appending.
     ids = obs.company_ids
 
     if APPLE_COMPANY_ID in ids:

@@ -174,8 +174,15 @@ _LE_AUDIO_SERVICES = (0x1850, 0x184E, 0x1855, 0x1844)  # PACS/ASCS/TMAS/VCS
 
 
 def _matches_word(name: str, words: tuple[str, ...]) -> bool:
-    lowered = f" {name.lower()} "
-    return any(w in lowered for w in words)
+    """Match each word at a *word boundary* (not a bare substring).
+
+    A leading ``\\b`` prevents mid-word false positives (e.g. "Rewatchable"
+    matching "watch", "housemouse" matching "mouse") while still allowing the
+    intended product-suffix patterns ("Galaxy Watch6", "Buds2") and prefix
+    tokens ("orolog" -> "orologio") that a trailing boundary would break.
+    """
+    lowered = name.lower()
+    return any(re.search(rf"\b{re.escape(w)}", lowered) for w in words)
 
 
 def _has_service(service_uuids: frozenset[str], value16: int) -> bool:

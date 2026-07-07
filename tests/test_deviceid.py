@@ -33,6 +33,13 @@ class TestClassification:
         assert c.effective is Strategy.CLASSIC_LINK
         assert c.warnings  # still warns about platform caveats (Windows reachability-only)
 
+    def test_mixed_vendor_ids_follow_documented_precedence(self) -> None:
+        # Finding 4: precedence is first-match-wins (Apple > Android > MS >
+        # wearable). A multi-vendor observation must resolve deterministically.
+        assert classify(obs(APPLE_COMPANY_ID, SAMSUNG_COMPANY_ID)).kind is DeviceKind.APPLE
+        assert classify(obs(SAMSUNG_COMPANY_ID, MICROSOFT_COMPANY_ID)).kind is DeviceKind.ANDROID
+        assert classify(obs(MICROSOFT_COMPANY_ID, FITBIT_COMPANY_ID)).kind is DeviceKind.MICROSOFT
+
     def test_google_is_android(self) -> None:
         assert classify(obs(GOOGLE_COMPANY_ID)).kind is DeviceKind.ANDROID
 

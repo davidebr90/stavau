@@ -278,6 +278,17 @@ def test_device_kind_label_name_categories() -> None:
     assert "Mouse" in vm.device_kind_label(frozenset(), name="MX Master Mouse")
 
 
+def test_device_kind_label_word_boundary_avoids_midword_false_positives() -> None:
+    # Finding 5: a token embedded mid-word must not match. "Rewatchable" is not a
+    # wearable; "housemouse" is not a mouse. But real product suffixes still work.
+    set_language("en")
+    assert "Wearable" not in vm.device_kind_label(frozenset(), name="Rewatchable Cam")
+    assert "Mouse" not in vm.device_kind_label(frozenset(), name="housemouse sensor")
+    # Suffix-numbered products and prefix tokens still classify correctly.
+    assert "Wearable" in vm.device_kind_label(frozenset(), name="Galaxy Watch6")
+    assert "Wearable" in vm.device_kind_label(frozenset(), name="Orologio Fossil")
+
+
 def test_device_kind_label_service_uuid_signals() -> None:
     set_language("en")
     hid = frozenset({"00001812-0000-1000-8000-00805f9b34fb"})
