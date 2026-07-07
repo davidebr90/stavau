@@ -27,7 +27,7 @@ import sys
 import threading
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QBrush, QCloseEvent, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -310,6 +310,19 @@ class CalibrationWizard(QDialog):
     def outcome(self) -> vm.CalibrationOutcome | None:
         return self._outcome
 
+    def done(self, result: int) -> None:
+        """Join any in-flight sample thread before the dialog closes.
+
+        ``done()`` is the single choke point for Accept, Cancel, Escape and the
+        window-close (X), so joining here guarantees the sample QThread is never
+        destroyed while still running (which would abort the process)."""
+        thread = self._thread
+        if thread is not None and thread.isRunning():
+            thread.quit()
+            if not thread.wait(10000):
+                thread.wait()
+        super().done(result)
+
 
 # ---------------------------------------------------------------- main window
 
@@ -372,7 +385,7 @@ class MainWindow(QMainWindow):
         self._tray_menu.addAction(self._tray_stop_action)
         self._tray_menu.addSeparator()
         quit_action = QAction(tr("tray.quit"), self)
-        quit_action.triggered.connect(QApplication.quit)
+        quit_action.triggered.connect(self._quit_app)
         self._tray_menu.addAction(quit_action)
         self._tray_icon.setContextMenu(self._tray_menu)
         self._tray_icon.activated.connect(self._on_tray_activated)
@@ -385,6 +398,49 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Closing the window must not orphan a running monitor thread.
+
+        With a tray icon present, the X hides to tray (the monitor keeps running
+        and stays reachable via the tray menu / Quit) instead of quitting and
+        leaving the QThread running `asyncio.run(session.run())` with its cleanup
+        `finally` never executed. Without a tray, do a clean shutdown first.
+        """
+        if self._tray_icon.isVisible():
+            event.ignore()
+            self.hide()
+            return
+        self._shutdown()
+        event.accept()
+
+    def _quit_app(self) -> None:
+        """Tray 'Quit': stop and join worker threads, then quit the app."""
+        self._shutdown()
+        QApplication.quit()
+
+    def _shutdown(self) -> None:
+        """Stop the monitor and join every worker thread before the app exits.
+
+        A QThread destroyed while still running aborts the process, so each
+        thread is quit and waited on (never left dangling)."""
+        if self._monitor_worker is not None:
+            self._monitor_worker.stop()  # let session.run() reach its cleanup
+        self._join_thread(self._monitor_thread)
+        self._monitor_thread = None
+        self._monitor_worker = None
+        self._join_thread(self._scan_thread)
+        self._scan_thread = None
+        self._scan_worker = None
+
+    @staticmethod
+    def _join_thread(thread: QThread | None, timeout_ms: int = 10000) -> None:
+        if thread is not None and thread.isRunning():
+            thread.quit()
+            if not thread.wait(timeout_ms):
+                # Last resort: never return while the thread still runs, or its
+                # C++ object could be destroyed mid-execution and crash.
+                thread.wait()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -561,6 +617,8 @@ class MainWindow(QMainWindow):
             self._refresh_state_icon(None)
 
     def _on_scan_clicked(self) -> None:
+        if self._scan_thread is not None and self._scan_thread.isRunning():
+            return  # a scan is already in flight; ignore re-entry
         self._scan_button.setEnabled(False)
         self._scan_spinner.setVisible(True)
         self._scan_status.setText(tr("device.scanning"))
