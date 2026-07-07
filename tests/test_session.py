@@ -28,6 +28,23 @@ class FakeLocker:
         self.lock_calls += 1
 
 
+class FailingLocker:
+    """A locker that raises LockError on its first `fail_times` calls."""
+
+    name = "fake"
+
+    def __init__(self, fail_times: int = 1) -> None:
+        self.lock_calls = 0
+        self._fail_times = fail_times
+
+    def lock(self) -> None:
+        from stavau.platform.base import LockError
+
+        self.lock_calls += 1
+        if self.lock_calls <= self._fail_times:
+            raise LockError("simulated lock failure")
+
+
 class FakeSource:
     def __init__(self) -> None:
         self.started = False
@@ -58,6 +75,7 @@ def run_session(
     monkeypatch: pytest.MonkeyPatch,
     observer: LockStateObserver | None = None,
     radio_probe: RadioProbeStub | None = None,
+    locker: object | None = None,
     **overrides: object,
 ) -> tuple[FakeLocker, list[Tick]]:
     settings = Settings(
@@ -75,7 +93,7 @@ def run_session(
     for key, value in overrides.items():
         setattr(settings, key, value)
 
-    locker = FakeLocker()
+    locker = locker or FakeLocker()
     session = MonitorSession(
         settings, locker, EventLog(tmp_path / "events.jsonl"), observer=observer
     )
@@ -348,3 +366,48 @@ class TestGuardrail:
         assert locker.lock_calls > 3
         assert any(t.breaker_paused for t in ticks)
         assert any(not t.breaker_paused for t in ticks[-5:])
+
+
+class TestRetryGating:
+    def test_failed_lock_does_not_relock_a_returning_user(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A lock fails (retry pending). The user then RETURNS (within the return
+        # threshold) but the return dwell hasn't completed. The stale 5 s retry
+        # must NOT fire and lock the user back out while they are coming back.
+        script: list[float | None] = [-50.0] * 3 + [-90.0] * 7 + [-50.0] * 15
+        failing = FailingLocker(fail_times=1)
+        locker, ticks = run_session(
+            tmp_path,
+            script,
+            monkeypatch,
+            locker=failing,
+            return_seconds=20.0,  # keep the machine in RETURNING for the window
+        )
+        # Exactly one (failed) attempt: no retry-lock while returning.
+        assert failing.lock_calls == 1
+        assert any(t.state.value == "returning" for t in ticks)
+
+    def test_breaker_paused_at_away_still_locks_after_cooldown(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Trip the breaker, then a fresh walk-away happens WHILE paused (the lock
+        # is suppressed) and the user stays away. After the cooldown ends the
+        # owed lock must still fire — the departure must not be silently forgotten.
+        script: list[float | None] = []
+        for _ in range(3):  # three quick cycles trip the breaker
+            script += [-90.0] * 7
+            script += [-50.0] * 5
+        script += [-50.0] * 5  # re-arm near
+        script += [-90.0] * 45  # leave while paused, then stay away past cooldown
+        locker, ticks = run_session(
+            tmp_path,
+            script,
+            monkeypatch,
+            breaker_max_locks=3,
+            breaker_window_seconds=10000.0,
+            breaker_cooldown_seconds=25.0,
+        )
+        assert any(t.breaker_paused for t in ticks)
+        # 3 while tripping + at least one more after the cooldown while still away.
+        assert locker.lock_calls >= 4

@@ -234,7 +234,10 @@ class MonitorSession:
                         distance=None if distance is None else round(distance, 2),
                     )
                     last_state = self._machine.state
-                if self._machine.state is PresenceState.NEAR:
+                if self._machine.state is not PresenceState.AWAY:
+                    # Left the away state (returning or near again): abandon any
+                    # pending lock so a stale retry can never lock a user who is
+                    # actively coming back before the return dwell completes.
                     lock_pending_since = None
 
                 retry_due = (
@@ -243,9 +246,13 @@ class MonitorSession:
                 )
                 if must_lock or retry_due:
                     if self._breaker.is_paused(now):
-                        # Guardrail active: do not lock, and stop retrying so the
-                        # user gets an uninterrupted window to disable the daemon.
-                        lock_pending_since = None
+                        # Guardrail active: suppress this lock, but remember it is
+                        # owed (do NOT forget the departure) so it fires once the
+                        # cooldown ends. The timer is set once and not reset each
+                        # tick, so retry_due stays true through the pause and the
+                        # lock lands as soon as the breaker resumes.
+                        if lock_pending_since is None:
+                            lock_pending_since = now
                         if not breaker_announced:
                             self._log.append(
                                 "breaker_suppressed_lock",
