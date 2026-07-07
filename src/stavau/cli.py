@@ -346,12 +346,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         asyncio.run(session.run(duration=args.duration, on_tick=printer))
     except Exception as exc:  # noqa: BLE001 - refuse loudly with an actionable reason (I1)
-        # Startup failure = clean refusal to start. Mid-run death while ARMED
-        # must fail safe: lock before exiting (I1), since protection is ending.
-        if locker is not None and printer.saw_ticks:
-            with contextlib.suppress(Exception):
+        # Fail safe (I1): if we are ARMED, lock before exiting regardless of
+        # whether we ever ticked. A monitor that dies *before* protecting is at
+        # least as dangerous as one that dies mid-run — the user may already
+        # believe protection is active. A precautionary-lock failure is reported
+        # loudly rather than suppressed, so the user is never falsely reassured.
+        if locker is not None:
+            when = "died mid-run" if printer.saw_ticks else "failed to start"
+            try:
                 locker.lock()
-                print("monitor died mid-run: screen locked as a precaution", flush=True)
+                print(f"monitor {when}: screen locked as a precaution", flush=True)
+            except Exception as lock_exc:  # noqa: BLE001
+                print(
+                    f"monitor {when} AND the precautionary lock FAILED ({lock_exc}); "
+                    "lock your screen manually now",
+                    file=sys.stderr,
+                    flush=True,
+                )
         hint = ""
         with contextlib.suppress(Exception):
             from stavau.core.radiostate import radio_available
