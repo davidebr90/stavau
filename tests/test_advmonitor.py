@@ -356,10 +356,13 @@ class TestDeviceFoundLost:
         asyncio.run(drive())
         assert counts[1] > counts[0]
 
-    def test_release_stops_pushing_fail_safe(self) -> None:
+    def test_release_stops_pushing_and_starts_fallback(self) -> None:
+        # Release stops synthesized presence AND recovers to the scanning
+        # fallback so the source self-heals instead of going permanently silent.
         bus = FakeBus()
         tracker = FakeTracker()
-        source = make_advmonitor_source(bus, tracker)
+        fallback = FakeFallback()
+        source = make_advmonitor_source(bus, tracker, fallback=fallback)
         counts: list[int] = []
 
         async def drive() -> None:
@@ -375,7 +378,8 @@ class TestDeviceFoundLost:
             await source.stop()
 
         asyncio.run(drive())
-        assert counts[0] == counts[1]
+        assert counts[0] == counts[1]  # synthesized presence stopped
+        assert fallback.started  # recovered to software scanning
 
     def test_unresolvable_device_path_pushes_nothing(self) -> None:
         bus = FakeBus(addresses={})
@@ -596,3 +600,24 @@ class TestBusDeathFailSafe:
             await source.stop()
 
         asyncio.run(drive())
+
+    def test_dead_bus_stops_within_one_beat(self) -> None:
+        # Per-beat liveness (finding 11): a bus already dead before the first
+        # keepalive beat yields at most the single found-push, never a burst of
+        # synthesized presence (the old every-5th-beat check leaked ~4 pushes).
+        bus = DyingBus()
+        bus.alive = False
+        tracker = FakeTracker()
+        fallback = FakeFallback()
+        source = make_advmonitor_source(bus, tracker, fallback=fallback)
+
+        async def drive() -> None:
+            await source.start()
+            assert bus.spec is not None
+            bus.spec.on_device_found(TARGET_PATH)
+            await asyncio.sleep(0.1)  # many beats would elapse if it kept beating
+            await source.stop()
+
+        asyncio.run(drive())
+        assert len(tracker.pushes) == 1  # only the initial found-push, no beats
+        assert fallback.started

@@ -179,17 +179,29 @@ class WinRtConnectionBackend:
         return int(address.replace(":", "").replace("-", ""), 16)
 
     async def read_rssi(self, address: str) -> float | None:
-        from winrt.windows.devices.bluetooth import (
-            BluetoothConnectionStatus,
-            BluetoothDevice,
-        )
-
-        device = await BluetoothDevice.from_bluetooth_address_async(self._mac_to_int(address))
-        if device is None:
+        # A malformed address is a config problem, not "reachable" — degrade to
+        # None (the Protocol forbids raising for the not-reachable case), before
+        # any WinRT work.
+        try:
+            bt_addr = self._mac_to_int(address)
+        except ValueError:
             return None
-        if device.connection_status == BluetoothConnectionStatus.CONNECTED:
-            return PRESENT_RSSI_DBM
-        return None
+        # Any WinRT/COM error (adapter busy, device never bonded, transient
+        # failure) is reachability-unknown -> None, never a raise into the loop.
+        try:
+            from winrt.windows.devices.bluetooth import (
+                BluetoothConnectionStatus,
+                BluetoothDevice,
+            )
+
+            device = await BluetoothDevice.from_bluetooth_address_async(bt_addr)
+            if device is None:
+                return None
+            if device.connection_status == BluetoothConnectionStatus.CONNECTED:
+                return PRESENT_RSSI_DBM
+            return None
+        except Exception:  # noqa: BLE001 - reachability unknown, fail safe far
+            return None
 
 
 def select_classic_backend() -> ClassicBackend | None:
@@ -212,6 +224,9 @@ async def _run(cmd: list[str], timeout: float) -> tuple[int, str]:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        await proc.wait()
+        # A wedged child (uninterruptible D-state on a flaky adapter) can leave
+        # wait() blocked forever; bound it so the poll loop always recovers.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
         return 1, ""
     return proc.returncode or 0, stdout.decode(errors="replace")

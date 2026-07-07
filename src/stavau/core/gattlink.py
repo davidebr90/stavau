@@ -264,10 +264,16 @@ class GattLinkSource:
     async def _run_loop(self) -> None:
         """Reconnect forever; only cancellation (via stop) ends the loop."""
         while True:
+            generation_before = self._generation
             # Belt and braces: _connect_and_poll already guards its awaits,
             # but no exception whatsoever may kill the monitoring task.
             with contextlib.suppress(Exception):
                 await self._connect_and_poll()
+            if self._generation != generation_before:
+                # retarget() ended the poll: reconnect to the NEW device
+                # immediately rather than sleeping a backoff meant for connect
+                # failures (retarget already reset the backoff to initial).
+                continue
             delay = self._backoff
             self._backoff = min(self._backoff * 2.0, self._backoff_max)
             await self._sleep(delay)

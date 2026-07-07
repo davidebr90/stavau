@@ -327,6 +327,41 @@ class TestRetarget:
         assert len(factory.clients) >= 2
         assert factory.clients[1].address == "11:22:33:44:55:66"
 
+    def test_retarget_reconnects_without_backoff_delay(self) -> None:
+        # Finding 17: a retarget must reconnect to the new device immediately,
+        # not after the connect-failure backoff. base_poll and backoff_initial
+        # are distinct so a backoff sleep is identifiable in the recorder.
+        factory = FakeFactory()
+        recorder = SleepRecorder()
+        source = GattLinkSource(
+            "AA:BB:CC:DD:EE:FF",
+            FakeTracker(),
+            client_factory=factory,
+            rssi_reader=constant_reader(-50.0),
+            base_poll=0.5,
+            relaxed_poll=0.5,
+            backoff_initial=5.0,
+            backoff_max=5.0,
+            sleep=recorder,
+        )
+
+        async def run() -> None:
+            await source.start()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            source.retarget("11:22:33:44:55:66")
+            for _ in range(300):
+                if len(factory.clients) >= 2:
+                    break
+                await asyncio.sleep(0)
+            await source.stop()
+
+        asyncio.run(run())
+        assert len(factory.clients) >= 2
+        # No backoff-length sleep (5.0) was applied around the retarget: the
+        # only sleeps are the 0.5 s poll intervals.
+        assert 5.0 not in recorder.delays
+
 
 class TestGattlinkSupported:
     def test_darwin_is_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:

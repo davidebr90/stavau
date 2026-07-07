@@ -353,9 +353,20 @@ class AdvMonitorSource:
         self._stop_tracking()
 
     def _on_release(self) -> None:
-        """BlueZ revoked the monitor: stop pushing (staleness fails safe)."""
+        """BlueZ revoked the monitor: stop synthesizing and recover to scanning.
+
+        Stopping alone would leave the source permanently silent (it would never
+        push again) until an explicit stop/start, so monitoring would quietly
+        die. Instead we hand off to the software-scanning fallback so the source
+        self-heals — mirroring the bus-death path in the keepalive.
+        """
         self._stop_tracking()
-        self.note = "advertisement monitor released by BlueZ; awaiting restart"
+        self.note = "advertisement monitor released by BlueZ; starting scan fallback"
+        with contextlib.suppress(RuntimeError):
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(self._start_fallback())
+            self._resolve_tasks.add(task)
+            task.add_done_callback(self._resolve_tasks.discard)
 
     def _stop_tracking(self) -> None:
         self._found_path = None
@@ -371,14 +382,12 @@ class AdvMonitorSource:
     async def _keepalive(self) -> None:
         # Fail-safe anchor: synthesized presence must stay tied to bus
         # liveness. Without this, a BlueZ/adapter death that never delivers
-        # Release would keep faking presence forever (fail-open). Every 5th
-        # beat we verify the bus; on death we stop pushing (staleness locks)
-        # and hand off to the scanning fallback.
-        beats = 0
+        # Release would keep faking presence forever (fail-open). We verify the
+        # bus EVERY beat (a cheap boolean read) and push only *after* it passes,
+        # so synthesized presence can outlive a dead bus by at most one beat.
         while True:
             await asyncio.sleep(self._keepalive_interval_s)
-            beats += 1
-            if beats % 5 == 0 and not self._bus_alive():
+            if not self._bus_alive():
                 self.note = "D-Bus/BlueZ connection lost; synthesized presence stopped"
                 await self._start_fallback()
                 self._stop_tracking()  # cancels this task; nothing awaits after

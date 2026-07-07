@@ -134,3 +134,57 @@ class TestBackendSelection:
     def test_winrt_backend_unavailable_off_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(classic_mod.sys, "platform", "linux")
         assert WinRtConnectionBackend.available() is False
+
+
+class TestWinRtReadRssiRobustness:
+    def test_malformed_address_returns_none_not_raises(self) -> None:
+        # A bad address must degrade to "not reachable" (None), never raise:
+        # the ProximitySource poll loop treats a raise and a None differently
+        # and the Protocol contract says read_rssi must not raise here.
+        rssi = asyncio.run(WinRtConnectionBackend().read_rssi("not-a-mac"))
+        assert rssi is None
+
+    def test_winrt_failure_returns_none(self) -> None:
+        # A valid-looking address on a box without winrt (CI Linux/macOS): the
+        # guarded import / WinRT call fails and must yield None, not propagate.
+        rssi = asyncio.run(WinRtConnectionBackend().read_rssi("AA:BB:CC:DD:EE:FF"))
+        assert rssi is None
+
+
+class TestRunTimeout:
+    def test_run_returns_even_if_wait_hangs_after_kill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A wedged child (D-state) whose wait() never returns must not hang the
+        # poll loop forever: the post-kill wait is time-bounded.
+        class _HangingProc:
+            def __init__(self) -> None:
+                self.killed = False
+                self.returncode = None
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                await asyncio.sleep(3600)  # exceeds the caller timeout
+                return b"", b""
+
+            def kill(self) -> None:
+                self.killed = True
+
+            async def wait(self) -> int:
+                await asyncio.sleep(3600)  # hangs even after kill
+                return 0
+
+        proc = _HangingProc()
+
+        async def fake_exec(*_args: object, **_kwargs: object) -> _HangingProc:
+            return proc
+
+        monkeypatch.setattr(classic_mod.asyncio, "create_subprocess_exec", fake_exec)
+
+        async def drive() -> tuple[int, str]:
+            # Outer bound well above the internal post-kill bound: if _run
+            # honoured the bound it returns; otherwise this times out (fail).
+            return await asyncio.wait_for(classic_mod._run(["x"], timeout=0.01), timeout=8.0)
+
+        rc, out = asyncio.run(drive())
+        assert (rc, out) == (1, "")
+        assert proc.killed
