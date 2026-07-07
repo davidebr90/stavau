@@ -19,6 +19,15 @@ class TestTripping:
         assert b.register_lock(20.0) is True  # third lock within 120 s -> trip
         assert b.is_paused(21.0) is True
 
+    def test_window_boundary_is_inclusive(self) -> None:
+        # Finding 2: a lock exactly `window` seconds after the oldest still
+        # counts (evict on strictly-older). Pinned as the intended, safe-direction
+        # (slightly-more-eager) semantics for this anti-lockout guard.
+        b = make_breaker(max_locks=3, window=120.0)
+        assert b.register_lock(0.0) is False
+        assert b.register_lock(60.0) is False
+        assert b.register_lock(120.0) is True  # oldest is exactly 120 s old, kept
+
     def test_does_not_trip_when_locks_are_spread_out(self) -> None:
         b = make_breaker(max_locks=3, window=120.0)
         assert b.register_lock(0.0) is False

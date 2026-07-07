@@ -178,6 +178,16 @@ class MonitorSession:
             strategy=self._effective_strategy,
             auto_unlock=self._autounlock is not None,
         )
+        if self._effective_strategy != self._settings.strategy:
+            # The chosen strategy was unavailable and we fell back: surface it so
+            # a silent downgrade (e.g. a misconfigured external_presence dropping
+            # to adv_scan, which locks constantly for an idle phone) is visible.
+            self._log.append(
+                "strategy_degraded",
+                requested=self._settings.strategy,
+                effective=self._effective_strategy,
+                reason=self._strategy_note,
+            )
         if self._settings.auto_unlock and self._autounlock is None and self._locker is not None:
             # Opted in but the platform has no safe unlock API: refuse loudly
             # rather than silently pretending the feature is on.

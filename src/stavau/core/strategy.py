@@ -73,9 +73,7 @@ def build_source(
         )
         if presence_backend is not None:
             return BuiltSource(
-                source=ExternalPresenceSource(
-                    tracker, presence_backend, max_age=presence_max_age
-                ),
+                source=ExternalPresenceSource(tracker, presence_backend, max_age=presence_max_age),
                 effective_strategy=Strategy.EXTERNAL_PRESENCE.value,
                 note=f"external presence via MQTT topic '{presence_topic}'",
             )

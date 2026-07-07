@@ -368,6 +368,29 @@ class TestGuardrail:
         assert any(not t.breaker_paused for t in ticks[-5:])
 
 
+class TestStrategyDegraded:
+    def test_degraded_strategy_is_logged(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Finding 6: external_presence with no MQTT host falls back to adv_scan;
+        # that silent downgrade must be surfaced in the event log.
+        run_session(
+            tmp_path,
+            [-50.0] * 2,
+            monkeypatch,
+            strategy="external_presence",
+        )
+        events = [r.event for r in EventLog(tmp_path / "events.jsonl").tail(200)]
+        assert "strategy_degraded" in events
+
+    def test_native_strategy_is_not_logged_as_degraded(
+        self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run_session(tmp_path, [-50.0] * 2, monkeypatch)  # default adv_scan
+        events = [r.event for r in EventLog(tmp_path / "events.jsonl").tail(200)]
+        assert "strategy_degraded" not in events
+
+
 class TestRetryGating:
     def test_failed_lock_does_not_relock_a_returning_user(
         self, tmp_path: Path, virtual_clock: None, monkeypatch: pytest.MonkeyPatch

@@ -66,6 +66,10 @@ class LockCircuitBreaker:
         """Record a lock that just happened. Returns True if it trips the breaker."""
         self._lock_times.append(now)
         cutoff = now - self._cfg.window_seconds
+        # Evict entries strictly older than the window; a lock exactly
+        # window_seconds old is kept, so the window is inclusive of its boundary.
+        # This trips fractionally more eagerly (the safe direction for an
+        # anti-lockout guard) — chosen deliberately, pinned by a unit test.
         while self._lock_times and self._lock_times[0] < cutoff:
             self._lock_times.popleft()
         if len(self._lock_times) >= self._cfg.max_locks:
