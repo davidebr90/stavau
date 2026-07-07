@@ -12,6 +12,7 @@ scanning.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -165,6 +166,13 @@ class RssiTracker:
     No advertisement for longer than `stale_seconds` means "no reliable
     signal" and `smoothed()` returns None — the fail-safe path that the
     presence state machine treats as infinitely far.
+
+    Thread-safety: `push()` is invoked from bleak's scanner-callback thread
+    (a WinRT/COM apartment thread on Windows, a dbus-fast thread on Linux)
+    while the monitoring loop calls `smoothed()`/`last_seen` on the event-loop
+    thread. All state (`_smoother`, `_last_seen`) is therefore guarded by a
+    lock so a `push` that *replaces* the smoother can never interleave with a
+    read that sums/medians its deques (a torn value or a spurious None).
     """
 
     def __init__(self, smoothing_window: int, stale_seconds: float = 15.0) -> None:
@@ -172,28 +180,33 @@ class RssiTracker:
         self._stale_seconds = stale_seconds
         self._smoother = RssiSmoother(window=smoothing_window)
         self._last_seen: float | None = None
+        self._lock = threading.Lock()
 
     def reset(self) -> None:
         """Forget all samples (e.g. after switching to a different device)."""
-        self._smoother = RssiSmoother(window=self._window)
-        self._last_seen = None
+        with self._lock:
+            self._smoother = RssiSmoother(window=self._window)
+            self._last_seen = None
 
     def push(self, rssi: float, now: float) -> None:
-        if self._last_seen is not None and now - self._last_seen > self._stale_seconds:
-            # After a long gap old samples describe a stale situation:
-            # restart smoothing instead of averaging across the gap.
-            self._smoother = RssiSmoother(window=self._window)
-        self._smoother.push(rssi)
-        self._last_seen = now
+        with self._lock:
+            if self._last_seen is not None and now - self._last_seen > self._stale_seconds:
+                # After a long gap old samples describe a stale situation:
+                # restart smoothing instead of averaging across the gap.
+                self._smoother = RssiSmoother(window=self._window)
+            self._smoother.push(rssi)
+            self._last_seen = now
 
     def smoothed(self, now: float) -> float | None:
-        if self._last_seen is None or now - self._last_seen > self._stale_seconds:
-            return None
-        return self._smoother.value
+        with self._lock:
+            if self._last_seen is None or now - self._last_seen > self._stale_seconds:
+                return None
+            return self._smoother.value
 
     @property
     def last_seen(self) -> float | None:
-        return self._last_seen
+        with self._lock:
+            return self._last_seen
 
 
 class BleProximitySource:
