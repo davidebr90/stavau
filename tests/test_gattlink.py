@@ -262,6 +262,10 @@ class TestStop:
             FakeTracker(),
             client_factory=FakeFactory(),
             rssi_reader=constant_reader(None),
+            # Inject a controllable sleep (like every other gattlink test): the
+            # real asyncio.sleep parks the poll loop in the selector, and
+            # cancelling *that* on the py3.10 event loop hangs the test.
+            sleep=SleepRecorder(),
         )
 
         async def run() -> None:

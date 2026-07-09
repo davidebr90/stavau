@@ -254,8 +254,12 @@ class GattLinkSource:
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+            # Bound the wait: if the cancellation is absorbed while the poll loop
+            # is parked in a real timed sleep (observed on the pre-3.12 asyncio
+            # event loop), a plain `await task` could hang shutdown. wait_for
+            # re-cancels and gives up so stop() always returns.
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                await asyncio.wait_for(task, timeout=5.0)
         client, self._client = self._client, None
         if client is not None:
             with contextlib.suppress(Exception):
