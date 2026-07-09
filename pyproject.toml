@@ -43,7 +43,6 @@ integration = [
 dev = [
   "pytest>=8.0",
   "pytest-cov",
-  "pytest-asyncio",
   "ruff>=0.6",
   "mypy>=1.10",
   "pre-commit",

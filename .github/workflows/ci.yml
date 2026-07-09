@@ -9,6 +9,10 @@ jobs:
   test:
     name: ${{ matrix.os }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    # Guard against a hung test/plugin wasting the full 6 h runner budget: the
+    # whole suite runs in well under a minute, so 15 minutes is a generous cap
+    # that turns any future hang into a fast, visible failure.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +37,7 @@ jobs:
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
