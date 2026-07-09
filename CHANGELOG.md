@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Smart-home / mesh integration** (`core/integration.py`, optional `[integration]` extra, **off by default, local-LAN MQTT only**): a boundary to Home Assistant that reaches Matter, Z-Wave, Thread and Wi-Fi presence without embedding any radio stack. Two directions: consume an external presence signal as the `external_presence` proximity strategy (fail-safe — absent/unknown/lost-connection never keep the screen unlocked), and emit `locked`/`unlocked` events to an MQTT topic so home-automation routines can react (emission never affects locking). MQTT password read from `$STAVAU_MQTT_PASSWORD`, never stored. Threat-model T11; see `docs/integrations.md`. Invariant I3 refined: no network by default, this is the only opt-in, local-only exception.
 
+### Fixed
+- **Hardening sweep** (whole-project adversarial review; see `docs/hardening-plan.md`). Closed three fail-open paths: external MQTT presence is now bounded by `integration_presence_max_age` (a silently-dead sensor can no longer hold the screen unlocked forever); auto-unlock time-bounds its own-lock expectation so a later manual `Win+L` is never misclassified as stavau's and auto-unlocked (threat-model T9); and the lock retry is gated on presence state so a returning user is never re-locked, while a lock owed during a breaker pause is no longer forgotten after cooldown. Also: config rejects an implausible calibration / out-of-range value as a handled `ConfigError` instead of crashing and coerces JSON int/float fields; `stavau run` fail-safe-locks even when it dies before the first tick and reports a failed precautionary lock; `RssiTracker` is guarded against the bleak-callback/loop data race; the Classic / adv_monitor / gatt_link strategies gained subprocess, bus-liveness and reconnect robustness; the Linux/Windows lock-state observers tear down without leaking; the GUI no longer orphans worker threads on close; and the event log caps oversized detail strings.
+- **CI reliability**: the `py3.10` matrix jobs were hanging for the full 6-hour runner limit because the (entirely unused) `pytest-asyncio` plugin dead-locked at collection under the pinned toolchain; it is removed from the dev extra, and each workflow job is now capped at 15 minutes so a future hang fails fast.
+
+### Changed
+- Prebuilt PyInstaller bundles now include the MQTT `[integration]` extra; the PySide6 GUI stays a pip/pipx-only install (`stavau[gui]`) rather than being bundled (Qt is large). See `docs/install.md`.
+
 ## [0.3.0] - 2026-07-06
 
 The graphical milestone: a real app, richer strategies, and safe auto-unlock.

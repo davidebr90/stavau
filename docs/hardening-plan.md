@@ -1,5 +1,11 @@
 # Hardening plan — full-project defect sweep (2026-07-07)
 
+> **Status: executed.** All cards H0–H12 below landed on `main` (13 commits),
+> each with a failing-first regression test and the full gate (pytest, `mypy
+> --strict` on the three platforms, ruff). The one deferred item is the
+> intra-tick observer-poll race noted under finding 19/[3] (needs edge-driven
+> origin + a hardware test). See the CHANGELOG `[Unreleased]` for the summary.
+
 A whole-codebase adversarial review (five parallel readers, one per slice, each
 re-reading before reporting) surfaced the defects below. Every item was
 re-verified against the source at `file:line` before landing here. The list is
