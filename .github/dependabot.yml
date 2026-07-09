@@ -1,0 +1,32 @@
+# Dependabot keeps the Python dependencies and the GitHub Actions pinned in the
+# workflows up to date. It complements the `pip-audit` CI job (which flags known
+# vulnerabilities) by proposing routine version bumps as reviewable PRs.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for the low-risk minor/patch bumps to cut review noise;
+      # majors still come as individual PRs so they get deliberate attention.
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
