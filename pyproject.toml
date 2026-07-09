@@ -43,6 +43,7 @@ integration = [
 dev = [
   "pytest>=8.0",
   "pytest-cov",
+  "pytest-timeout",
   "ruff>=0.6",
   "mypy>=1.10",
   "pre-commit",
@@ -109,4 +110,7 @@ warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# A per-test wall-clock timeout (thread method dumps the hanging test's stack and
+# fails it) so a deadlock can never hang CI again — the whole suite runs in a few
+# seconds, so 120 s is a wide safety margin, not a real bound.
+addopts = "-q --timeout=120 --timeout-method=thread"
